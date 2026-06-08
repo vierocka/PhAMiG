@@ -37,23 +37,46 @@
   ''
 }
 
+.kinbiont_julia_version <- function(julia_bin) {
+  # Returns numeric version or NA — safe, no JuliaCall needed
+  out <- tryCatch(
+    system2(julia_bin, '--version', stdout = TRUE, stderr = FALSE),
+    error = function(e) ''
+  )
+  m <- regmatches(out, regexpr('\\d+\\.\\d+\\.\\d+', out))
+  if (length(m) == 1) package_version(m) else NA
+}
+
 .kinbiont_julia_ready <- function() {
   # Return cached result — avoids repeated julia_setup() calls that segfault
   if (!is.na(.KINBIONT_CACHE$ready)) return(isTRUE(.KINBIONT_CACHE$ready))
   if (!requireNamespace('JuliaCall', quietly = TRUE)) {
-    .KINBIONT_CACHE$ready <- FALSE; return(FALSE)
+    .KINBIONT_CACHE$ready <- FALSE
+    message('[kinbiont] JuliaCall not installed. Run: install.packages("JuliaCall")')
+    return(FALSE)
   }
+
+  jh <- .kinbiont_julia_home()
+  julia_bin <- if (nzchar(jh)) file.path(jh, 'julia') else Sys.which('julia')
+
+  # Version check BEFORE julia_setup() — Julia 1.9.x segfaults with system CHOLMOD 5.2
+  ver <- .kinbiont_julia_version(julia_bin)
+  if (!is.na(ver) && ver < package_version('1.11.0')) {
+    .KINBIONT_CACHE$ready <- FALSE
+    message(sprintf(
+      '[kinbiont] Julia %s detected but version 1.11+ required.\n  CHOLMOD incompatibility will cause segfault.\n  Download generic binaries from https://julialang.org/downloads/',
+      as.character(ver)))
+    return(FALSE)
+  }
+
   result <- tryCatch({
-    jh <- .kinbiont_julia_home()
-    if (nzchar(jh))
+    if (nzchar(julia_bin) && file.exists(julia_bin))
       JuliaCall::julia_setup(JULIA_HOME = jh, installJulia = FALSE)
     else
       JuliaCall::julia_setup(installJulia = FALSE)
     JuliaCall::julia_eval('using Kinbiont; true')
   }, error = function(e) {
-    message('[kinbiont] Julia setup failed: ', conditionMessage(e),
-            '\n  Fix: download generic Julia 1.11 binaries from julialang.org',
-            ' (system CHOLMOD 5.2 incompatible with Julia 1.9 CHOLMOD 3.0)')
+    message('[kinbiont] Julia setup failed: ', conditionMessage(e))
     FALSE
   })
   .KINBIONT_CACHE$ready <- isTRUE(result)

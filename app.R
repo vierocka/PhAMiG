@@ -1001,6 +1001,15 @@ server <- function(input, output, session) {
   comparison_result <- reactiveVal(data.frame())
   comp_raw_long     <- reactiveVal(NULL)
 
+  # ── Auto-load on startup — show existing DB data without clicking Initialize
+  session$onFlushed(function() {
+    rows <- tryCatch({
+      qres_migrate_schema(con)   # patch any missing columns silently
+      qres_search_datasets(con)
+    }, error = function(e) data.frame())
+    if (nrow(rows) > 0) dataset_results(rows)
+  }, once = TRUE)
+
   # ── Initialize DB ──────────────────────────────────────────────────────────
   observeEvent(input$init_db, {
     withProgress(message = 'Initializing database…', {
@@ -1071,8 +1080,23 @@ server <- function(input, output, session) {
     result_rows  <- NULL   # single exit point — set once, written once
     notify_msg   <- NULL
 
+    # ── Step 0: Sidebar-only search (empty q, perturbation filters set) ──────
+    if (!nzchar(q) && (!is.null(perturb_type) || !is.null(perturb_name))) {
+      rows <- tryCatch(
+        qres_filter_datasets(con,
+          perturbation_type = perturb_type,
+          perturbation      = perturb_name,
+          registered_only   = FALSE),
+        error = function(e) NULL
+      )
+      if (!is.null(rows) && nrow(rows) > 0) {
+        result_rows <- rows
+        notify_msg  <- paste0('Matched ', nrow(rows), ' dataset(s) by perturbation filter')
+      }
+    }
+
     # ── Step 1: Rule-based NL parser (always runs, no key needed) ─────────
-    if (nzchar(q) && !grepl('^10\\.', q)) {
+    if (is.null(result_rows) && nzchar(q) && !grepl('^10\\.', q)) {
       parsed <- tryCatch(qres_parse_nl_query(q), error = function(e) NULL)
 
       if (!is.null(parsed) && length(parsed) > 0) {
@@ -1202,7 +1226,20 @@ server <- function(input, output, session) {
 
   output$selected_info <- renderUI({
     req(selected_dataset())
-    tags$p(tags$strong('Selected dataset: '), selected_dataset())
+    tagList(
+      tags$p(tags$strong('Selected dataset: '), selected_dataset()),
+      actionButton('go_to_comparison', 'Open in Comparison',
+                   class = 'btn-info btn-sm', icon = icon('chart-bar'))
+    )
+  })
+
+  observeEvent(input$go_to_comparison, {
+    did <- selected_dataset()
+    df  <- dataset_results()
+    sp  <- df$species[df$dataset_id == did][1]
+    if (!is.na(sp) && nzchar(sp))
+      updateSelectizeInput(session, 'comp_species', selected = sp)
+    change_page('analyse')
   })
 
   # ── Raw curves ─────────────────────────────────────────────────────────────
@@ -1252,37 +1289,84 @@ server <- function(input, output, session) {
   # ── Single plugin run ──────────────────────────────────────────────────────
   observeEvent(input$run_plugin, {
     req(selected_dataset())
+    did    <- selected_dataset()
+    plugin <- input$plugin
     data   <- raw_long()
     params <- list(correction_type = input$correction_type)
 
-    processing_id <- qres_register_processing_run(
-      con, selected_dataset(), input$plugin,
-      correction_type = input$correction_type,
-      params          = params,
-      status          = 'running'
-    )
-
-    result <- tryCatch(
-      qres_run_plugin(data, input$plugin, params),
-      error = function(e) list(derived_metrics = data.frame(),
-                                logs = list(message = conditionMessage(e)))
-    )
-
-    if (nrow(result$derived_metrics) > 0) {
-      m               <- result$derived_metrics
-      m$processing_id <- processing_id
-      m$dataset_id    <- m$dataset_id %||% selected_dataset()
-      m$metric_id     <- paste(processing_id, m$well_id, m$metric_name,
-                               seq_len(nrow(m)), sep = '__')
-      cols_needed <- c('metric_id', 'processing_id', 'dataset_id', 'well_id',
-                       'metric_name', 'metric_value', 'metric_unit', 'model_name')
-      m <- m[, intersect(cols_needed, names(m)), drop = FALSE]
-      DBI::dbWriteTable(con, 'derived_metric', m, append = TRUE)
+    # KinBiont requires Julia 1.11 — check BEFORE calling julia_setup()
+    # (Julia 1.9.x causes segfault due to CHOLMOD incompatibility)
+    if (plugin == 'kinbiont' && !isTRUE(.kinbiont_julia_ready())) {
+      showNotification(
+        tagList(
+          tags$strong('KinBiont.jl requires Julia 1.11+.'), tags$br(),
+          tags$span(style = 'font-size:12px;',
+            '1. Download generic binaries: ',
+            tags$a('julialang.org/downloads', href='https://julialang.org/downloads/', target='_blank'), tags$br(),
+            '2. In R: ', tags$code('install.packages("JuliaCall")'), tags$br(),
+            '3. In Julia: ', tags$code('Pkg.add("Kinbiont")'), tags$br(),
+            '4. Set ', tags$code('JULIA_HOME'), ' in ~/.Renviron to the Julia 1.11 bin path.'
+          )
+        ),
+        type = 'warning', duration = 15
+      )
+      return()
     }
 
-    DBI::dbExecute(con,
-      "UPDATE processing_run SET status = 'finished', message = ? WHERE processing_id = ?",
-      params = list(result$logs$message %||% '', processing_id))
+    withProgress(message = paste0('Running ', plugin, ' on ', did, '…'), value = 0.1, {
+
+      processing_id <- qres_register_processing_run(
+        con, did, plugin,
+        correction_type = input$correction_type,
+        params          = params,
+        status          = 'running'
+      )
+
+      setProgress(0.4, detail = 'Fitting curves…')
+      result <- tryCatch(
+        qres_run_plugin(data, plugin, params),
+        error = function(e) list(
+          derived_metrics = data.frame(),
+          logs = list(message = conditionMessage(e), status = 'error')
+        )
+      )
+
+      setProgress(0.8, detail = 'Saving results…')
+      status_out <- if (nrow(result$derived_metrics) > 0) 'finished' else 'no_results'
+
+      if (nrow(result$derived_metrics) > 0) {
+        m               <- result$derived_metrics
+        m$processing_id <- processing_id
+        m$dataset_id    <- m$dataset_id %||% did
+        m$metric_id     <- paste(processing_id, m$well_id, m$metric_name,
+                                 seq_len(nrow(m)), sep = '__')
+        cols_needed <- c('metric_id', 'processing_id', 'dataset_id', 'well_id',
+                         'metric_name', 'metric_value', 'metric_unit', 'model_name')
+        m <- m[, intersect(cols_needed, names(m)), drop = FALSE]
+        DBI::dbWriteTable(con, 'derived_metric', m, append = TRUE)
+      }
+
+      DBI::dbExecute(con,
+        "UPDATE processing_run SET status = ?, message = ? WHERE processing_id = ?",
+        params = list(status_out, result$logs$message %||% '', processing_id))
+    })
+
+    # Notify and switch to Metrics tab
+    log_msg <- result$logs$message %||% ''
+    if (nrow(result$derived_metrics) > 0) {
+      n_wells <- length(unique(result$derived_metrics$well_id))
+      showNotification(
+        paste0(plugin, ': fitted ', n_wells, ' well(s). Results in Metrics tab.'),
+        type = 'message', duration = 6
+      )
+      updateTabsetPanel(session, 'mainTabset', selected = 'Metrics')
+    } else {
+      showNotification(
+        tagList(tags$strong(paste0(plugin, ' returned no results. ')),
+                if (nzchar(log_msg)) log_msg else 'Check plugin requirements.'),
+        type = 'warning', duration = 10
+      )
+    }
   })
 
   output$metrics_table <- renderDT({
