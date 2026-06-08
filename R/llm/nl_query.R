@@ -47,13 +47,15 @@ qres_llm_backend <- function() {
 .LLM_BACKEND_CACHE$backend <- NA_character_
 
 qres_llm_available <- function() {
-  if (is.na(.LLM_BACKEND_CACHE$backend))
+  # Only cache positive results — recheck if previously "none" so a key added
+  # to .Renviron and a session restart is picked up without clearing state.
+  if (is.na(.LLM_BACKEND_CACHE$backend) || .LLM_BACKEND_CACHE$backend == 'none')
     .LLM_BACKEND_CACHE$backend <- qres_llm_backend()
   .LLM_BACKEND_CACHE$backend != 'none'
 }
 
 qres_llm_backend_name <- function() {
-  if (is.na(.LLM_BACKEND_CACHE$backend))
+  if (is.na(.LLM_BACKEND_CACHE$backend) || .LLM_BACKEND_CACHE$backend == 'none')
     .LLM_BACKEND_CACHE$backend <- qres_llm_backend()
   .LLM_BACKEND_CACHE$backend
 }

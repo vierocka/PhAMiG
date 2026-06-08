@@ -20,6 +20,12 @@ data/long_csv/
 # ── Stale flat files (superseded by modular R/ — sourcing them breaks the app) ─
 R/_old_flat/
 
+# ── Local working notes ───────────────────────────────────────────────────────
+notes_toDo.txt
+
+# ── Zenodo raw downloads (large files, not committed) ─────────────────────────
+Zenodo_data/
+
 # ── OS noise ──────────────────────────────────────────────────────────────────
 .DS_Store
 Thumbs.db

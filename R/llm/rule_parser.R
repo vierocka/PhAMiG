@@ -65,33 +65,56 @@ qres_parse_nl_query <- function(text) {
   # ── Temperature ────────────────────────────────────────────────────────────
   # Patterns: "37°C", "37 degrees", "at 37", "30-37", "between 30 and 37"
   # Range: "between X and Y", "X to Y", "X-Y", "X–Y"
+  # Try range patterns in priority order; stop at first match.
+  temp_found <- FALSE
+
+  # "between X and Y °C" / "between X and Y degrees"
   range_m <- regmatches(txt, regexpr(
     'between\\s+(\\d+(?:\\.\\d+)?)\\s*(?:and|to)\\s*(\\d+(?:\\.\\d+)?)',
     txt, perl = TRUE))
   if (length(range_m) > 0) {
     nums <- as.numeric(regmatches(range_m, gregexpr('\\d+(?:\\.\\d+)?', range_m, perl = TRUE))[[1]])
     if (length(nums) == 2) {
-      filters$temp_min <- min(nums); filters$temp_max <- max(nums)
+      filters$temp_min <- min(nums); filters$temp_max <- max(nums); temp_found <- TRUE
     }
-  } else {
+  }
+
+  # "X and Y degrees/°C"  (e.g. "35 and 38 degree Celsius", "in 30 and 42°C")
+  if (!temp_found) {
+    multi_m <- regmatches(txt, regexpr(
+      '(\\d+(?:\\.\\d+)?)\\s+and\\s+(\\d+(?:\\.\\d+)?)\\s*(?:°c|°|degrees?|celsius|fahrenheit)',
+      txt, perl = TRUE))
+    if (length(multi_m) > 0) {
+      nums <- as.numeric(regmatches(multi_m, gregexpr('\\d+(?:\\.\\d+)?', multi_m, perl = TRUE))[[1]])
+      if (length(nums) == 2 && max(nums) <= 100) {
+        filters$temp_min <- min(nums); filters$temp_max <- max(nums); temp_found <- TRUE
+      }
+    }
+  }
+
+  # "X to Y °C" / "X-Y °C" (dash or en-dash)
+  if (!temp_found) {
     dash_m <- regmatches(txt, regexpr(
-      '(\\d+(?:\\.\\d+)?)\\s*[-–]\\s*(\\d+(?:\\.\\d+)?)\\s*(?:°|degrees?|c\\b)?',
+      '(\\d+(?:\\.\\d+)?)\\s*(?:to|[-–])\\s*(\\d+(?:\\.\\d+)?)\\s*(?:°c|°|degrees?|celsius)?',
       txt, perl = TRUE))
     if (length(dash_m) > 0) {
       nums <- as.numeric(regmatches(dash_m, gregexpr('\\d+(?:\\.\\d+)?', dash_m, perl = TRUE))[[1]])
       if (length(nums) == 2 && max(nums) <= 100) {
-        filters$temp_min <- min(nums); filters$temp_max <- max(nums)
+        filters$temp_min <- min(nums); filters$temp_max <- max(nums); temp_found <- TRUE
       }
-    } else {
-      single_m <- regmatches(txt, regexpr(
-        '(?:at|@|temp(?:erature)?\\s+(?:of)?\\s*)?(\\d+(?:\\.\\d+)?)\\s*(?:°c|°|degrees?)',
-        txt, perl = TRUE))
-      if (length(single_m) > 0) {
-        val <- as.numeric(regmatches(single_m,
-               gregexpr('\\d+(?:\\.\\d+)?', single_m, perl = TRUE))[[1]][1])
-        if (is.finite(val) && val >= 0 && val <= 100) {
-          filters$temp_min <- val - 0.5; filters$temp_max <- val + 0.5
-        }
+    }
+  }
+
+  # Single value: "at 37°C", "37 degrees", "temperature of 37"
+  if (!temp_found) {
+    single_m <- regmatches(txt, regexpr(
+      '(?:at|@|temp(?:erature)?\\s+(?:of)?\\s*)?(\\d+(?:\\.\\d+)?)\\s*(?:°c|°|degrees?|celsius)',
+      txt, perl = TRUE))
+    if (length(single_m) > 0) {
+      val <- as.numeric(regmatches(single_m,
+             gregexpr('\\d+(?:\\.\\d+)?', single_m, perl = TRUE))[[1]][1])
+      if (is.finite(val) && val >= 0 && val <= 100) {
+        filters$temp_min <- val - 0.5; filters$temp_max <- val + 0.5
       }
     }
   }

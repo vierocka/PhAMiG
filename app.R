@@ -1062,77 +1062,74 @@ server <- function(input, output, session) {
     qres_init_schema(con)
     q <- trimws(input$search %||% '')
 
-    # Sidebar perturbation overrides (always applied on top of any parsed result)
     perturb_type <- if (nzchar(input$search_perturb_type %||% '') &&
                         input$search_perturb_type != 'all')
       input$search_perturb_type else NULL
     perturb_name <- if (nzchar(trimws(input$search_perturb %||% '')))
       trimws(input$search_perturb) else NULL
 
+    result_rows  <- NULL   # single exit point — set once, written once
+    notify_msg   <- NULL
+
     # ── Step 1: Rule-based NL parser (always runs, no key needed) ─────────
-    # Handles: species names, temperature ranges ("35-37", "35 to 37", "37°C"),
-    # medium names, drug names, author patterns, year ranges.
-    if (nzchar(q) && !grepl('^10\\.', q)) {   # skip bare DOIs
+    if (nzchar(q) && !grepl('^10\\.', q)) {
       parsed <- tryCatch(qres_parse_nl_query(q), error = function(e) NULL)
 
       if (!is.null(parsed) && length(parsed) > 0) {
         if (!is.null(perturb_type)) parsed$perturbation_type <- perturb_type
         if (!is.null(perturb_name)) parsed$perturbation      <- perturb_name
-
         rows <- tryCatch(
           do.call(qres_filter_datasets, c(list(con = con, registered_only = FALSE), parsed)),
           error = function(e) NULL
         )
         if (!is.null(rows) && nrow(rows) > 0) {
-          dataset_results(rows)
-          showNotification(
-            paste0('Matched ', nrow(rows), ' dataset(s) — filters: ',
-                   paste(names(parsed), collapse = ', ')),
-            type = 'message', duration = 4)
-          return()
+          result_rows <- rows
+          notify_msg  <- paste0('Matched ', nrow(rows), ' dataset(s) — filters: ',
+                                paste(names(parsed), collapse = ', '))
         }
       }
 
-      # ── Step 2: LLM fallback (ellmer — anthropic or ollama) ───────────
-      if (qres_llm_available()) {
-        withProgress(message = paste0('Asking ', qres_llm_backend_name(), '…'), {
-          filters <- tryCatch(qres_nl_to_action(q), error = function(e) NULL)
-
-          if (!is.null(filters) && length(filters) > 0) {
-            if (!is.null(perturb_type)) filters$perturbation_type <- perturb_type
-            if (!is.null(perturb_name)) filters$perturbation      <- perturb_name
-            rows <- tryCatch(
-              do.call(qres_filter_datasets, c(list(con = con, registered_only = FALSE), filters)),
-              error = function(e) NULL
-            )
-            if (!is.null(rows) && nrow(rows) > 0) {
-              dataset_results(rows)
-              showNotification(
-                paste0('LLM matched ', nrow(rows), ' dataset(s)'),
-                type = 'message', duration = 4)
-              return()
-            }
+      # ── Step 2: LLM fallback (only when rule parser found nothing) ────
+      if (is.null(result_rows) && qres_llm_available()) {
+        filters <- withProgress(
+          message = paste0('Asking ', qres_llm_backend_name(), '…'),
+          value   = 0.5,
+          expr    = tryCatch(qres_nl_to_action(q), error = function(e) NULL)
+        )
+        if (!is.null(filters) && length(filters) > 0) {
+          if (!is.null(perturb_type)) filters$perturbation_type <- perturb_type
+          if (!is.null(perturb_name)) filters$perturbation      <- perturb_name
+          rows <- tryCatch(
+            do.call(qres_filter_datasets, c(list(con = con, registered_only = FALSE), filters)),
+            error = function(e) NULL
+          )
+          if (!is.null(rows) && nrow(rows) > 0) {
+            result_rows <- rows
+            notify_msg  <- paste0('LLM (', qres_llm_backend_name(), ') matched ',
+                                  nrow(rows), ' dataset(s)')
           }
-        })
+        }
       }
     }
 
-    # Keyword fallback: apply perturbation sidebar filters on top of keyword search
-    base_rows <- qres_search_datasets(con, q)
-    if ((!is.null(perturb_type) || !is.null(perturb_name)) && nrow(base_rows) > 0) {
-      if (!is.null(perturb_type) && 'perturbation_type' %in% names(base_rows)) {
-        base_rows <- base_rows[
-          is.na(base_rows$perturbation_type) |
-          grepl(perturb_type, base_rows$perturbation_type, ignore.case = TRUE), ]
-      }
-      if (!is.null(perturb_name) && 'perturbation' %in% names(base_rows)) {
-        base_rows <- base_rows[
-          is.na(base_rows$perturbation) |
-          grepl(perturb_name, base_rows$perturbation, ignore.case = TRUE), ]
+    # ── Step 3: Keyword fallback ───────────────────────────────────────────
+    if (is.null(result_rows)) {
+      result_rows <- tryCatch(qres_search_datasets(con, q), error = function(e) data.frame())
+      if (nrow(result_rows) > 0) {
+        if (!is.null(perturb_type) && 'perturbation_type' %in% names(result_rows))
+          result_rows <- result_rows[
+            is.na(result_rows$perturbation_type) |
+            grepl(perturb_type, result_rows$perturbation_type, ignore.case = TRUE), ]
+        if (!is.null(perturb_name) && 'perturbation' %in% names(result_rows))
+          result_rows <- result_rows[
+            is.na(result_rows$perturbation) |
+            grepl(perturb_name, result_rows$perturbation, ignore.case = TRUE), ]
       }
     }
-    dataset_results(base_rows)
-  }, ignoreInit = FALSE)
+
+    dataset_results(result_rows %||% data.frame())
+    if (!is.null(notify_msg)) showNotification(notify_msg, type = 'message', duration = 4)
+  }, ignoreInit = TRUE)
 
   output$dataset_table <- renderDT({
     df <- dataset_results()
@@ -1221,8 +1218,27 @@ server <- function(input, output, session) {
   })
 
   output$growth_plot <- renderPlot({
-    qres_plot_growth(raw_long(), log_y = input$log_y,
-                     title = paste('Raw curves —', selected_dataset()))
+    did  <- selected_dataset()
+    df   <- dataset_results()
+    row  <- if (nrow(df) > 0) df[df$dataset_id == did, ][1, ] else NULL
+
+    title <- if (!is.null(row) && nrow(row) > 0) {
+      parts <- c(
+        paste0(row$species %||% did,
+               if (!is.na(row$strain %||% NA) && nzchar(row$strain %||% ''))
+                 paste0(' (', row$strain, ')') else ''),
+        if (!is.na(row$temperature_c %||% NA)) paste0(row$temperature_c, '°C') else NULL,
+        if (!is.na(row$perturbation_type %||% NA) && row$perturbation_type != 'none')
+          paste0(row$perturbation_type,
+                 if (!is.na(row$perturbation %||% NA) && nzchar(row$perturbation %||% ''))
+                   paste0(': ', row$perturbation) else '') else NULL,
+        if (!is.na(row$medium_type %||% NA)) row$medium_type else NULL
+      )
+      paste('Raw curves —', paste(Filter(Negate(is.null), parts), collapse = ' | '))
+    } else {
+      paste('Raw curves —', did)
+    }
+    qres_plot_growth(raw_long(), log_y = input$log_y, title = title)
   })
 
   output$plate_qc_text <- renderPrint({
@@ -2006,37 +2022,92 @@ server <- function(input, output, session) {
   nl_result <- reactiveVal(NULL)
 
   output$llm_api_warning <- renderUI({
-    if (!qres_llm_available()) {
-      tags$div(class = 'alert alert-warning',
-        tags$strong('API key not set. '),
-        'Set ANTHROPIC_API_KEY to enable natural-language queries:',
-        tags$br(),
-        tags$code('Sys.setenv(ANTHROPIC_API_KEY = "sk-ant-…")')
+    backend <- tryCatch(qres_llm_backend(), error = function(e) 'none')
+    if (backend == 'none') {
+      tags$div(class = 'alert alert-info',
+        tags$strong('Rule-based mode active. '),
+        'NL queries use pattern matching. For LLM-powered queries, set ',
+        tags$code('ANTHROPIC_API_KEY'), ' in ', tags$code('~/.Renviron'),
+        ' and restart R — or run a local ', tags$a('Ollama', href = 'https://ollama.com', target = '_blank'), ' server.'
       )
     }
   })
 
   output$llm_status_badge <- renderUI({
-    if (qres_llm_available())
-      tags$span(class = 'label label-success', 'LLM ready')
-    else
-      tags$span(class = 'label label-warning', 'No API key')
+    backend <- tryCatch(qres_llm_backend(), error = function(e) 'none')
+    switch(backend,
+      'anthropic' = tags$span(class = 'label label-success', 'Anthropic Claude'),
+      'ollama'    = tags$span(class = 'label label-success', 'Ollama (local)'),
+      tags$span(class = 'label label-default', 'Rule-based')
+    )
   })
 
   observeEvent(input$nl_submit, {
-    req(nzchar(trimws(input$nl_question)))
-    withProgress(message = 'Asking Claude…', {
-      setProgress(0.3, detail = 'Translating question to query…')
-      action <- qres_nl_to_action(input$nl_question)
+    q <- trimws(input$nl_question %||% '')
+    req(nzchar(q))
 
-      setProgress(0.7, detail = 'Executing…')
-      result <- tryCatch(
-        qres_execute_action(con, action),
-        error = function(e) list(type = 'info',
-                                  description = paste('Execution error:', conditionMessage(e)),
-                                  data = NULL, plot_type = 'table')
-      )
-      nl_result(result)
+    withProgress(message = 'Interpreting query…', {
+
+      # ── Step 1: Rule-based parser (always works, no key needed) ──────────
+      setProgress(0.2, detail = 'Checking patterns…')
+      parsed <- tryCatch(qres_parse_nl_query(q), error = function(e) NULL)
+
+      if (!is.null(parsed) && length(parsed) > 0) {
+        rows <- tryCatch(
+          do.call(qres_filter_datasets, c(list(con = con, registered_only = FALSE), parsed)),
+          error = function(e) NULL
+        )
+        if (!is.null(rows) && nrow(rows) > 0) {
+          nl_result(list(
+            type        = 'table',
+            data        = rows,
+            description = paste0('Rule-based: ', paste(names(parsed), collapse = ', ')),
+            sql         = NULL,
+            plot_type   = 'table'
+          ))
+          return()
+        }
+      }
+
+      # ── Step 2: LLM (ellmer — anthropic or ollama) ────────────────────────
+      if (qres_llm_available()) {
+        setProgress(0.5, detail = paste0('Asking ', qres_llm_backend_name(), '…'))
+        filters <- tryCatch(qres_nl_to_action(q), error = function(e) NULL)
+
+        if (!is.null(filters) && length(filters) > 0) {
+          setProgress(0.8, detail = 'Running query…')
+          rows <- tryCatch(
+            do.call(qres_filter_datasets, c(list(con = con, registered_only = FALSE), filters)),
+            error = function(e) NULL
+          )
+          if (!is.null(rows) && nrow(rows) > 0) {
+            nl_result(list(
+              type        = 'table',
+              data        = rows,
+              description = paste0('LLM (', qres_llm_backend_name(), '): ',
+                                   paste(names(filters), collapse = ', ')),
+              sql         = NULL,
+              plot_type   = 'table'
+            ))
+            return()
+          }
+        }
+      }
+
+      # ── No results ────────────────────────────────────────────────────────
+      nl_result(list(
+        type        = 'table',
+        data        = data.frame(message = paste0(
+          'No datasets matched "', q, '". ',
+          if (!qres_llm_available())
+            'Tip: set ANTHROPIC_API_KEY in ~/.Renviron and restart R for LLM-powered search.'
+          else
+            'Try rephrasing — e.g. "E. coli 37°C" or "rifampicin dose response".'
+        )),
+        description = '',
+        sql         = NULL,
+        plot_type   = 'table'
+      ))
     })
   })
 
@@ -2078,14 +2149,28 @@ server <- function(input, output, session) {
   output$nl_curves_plot <- renderPlot({
     req(nl_result())
     res <- nl_result()
-    if (res$type != 'comparison' || is.null(res$filtered)) return(NULL)
-    raw_list <- lapply(res$filtered$dataset_id, function(did) {
-      tryCatch(qres_get_raw_curves(con, did), error = function(e) NULL)
+
+    # dataset_ids to plot: from comparison$filtered OR from table$data (rule-based results)
+    ids <- if (res$type == 'comparison' && !is.null(res$filtered)) {
+      res$filtered$dataset_id
+    } else if (res$type == 'table' && !is.null(res$data) &&
+               'dataset_id' %in% names(res$data) && nrow(res$data) > 0) {
+      head(res$data$dataset_id, 8)   # cap at 8 to keep plot readable
+    } else {
+      NULL
+    }
+    if (is.null(ids) || length(ids) == 0) return(NULL)
+
+    raw_list <- lapply(ids, function(did) {
+      df <- tryCatch(qres_get_raw_curves(con, did), error = function(e) NULL)
+      if (!is.null(df) && nrow(df) > 0) { df$dataset_id <- did; df }
     })
     combined <- dplyr::bind_rows(Filter(Negate(is.null), raw_list))
     if (nrow(combined) == 0) return(NULL)
-    qres_plot_growth(combined, log_y = input$nl_log_y,
-                     title = paste('Growth curves —', nrow(res$filtered), 'datasets'))
+
+    title <- paste0('Growth curves — ', length(ids), ' dataset(s): ',
+                    paste(ids, collapse = ', '))
+    qres_plot_growth(combined, log_y = input$nl_log_y %||% FALSE, title = title)
   })
 }
 
