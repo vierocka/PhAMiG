@@ -354,7 +354,18 @@ ui_metadata <- fluidPage(
 # ── SEARCH & BROWSE ───────────────────────────────────────────────────────────
 ui_search <- fluidPage(
   theme = shinytheme('cerulean'),
-  tags$head(tags$style(HTML('body { padding-bottom: 60px; }'))),
+  tags$head(
+    tags$style(HTML('body { padding-bottom: 60px; }
+      /* Keep DT tables from overflowing their container */
+      .dataTables_wrapper { overflow-x: auto; }
+      table.dataTable td { white-space: nowrap; }
+    ')),
+    # DataTables Buttons extension (column visibility)
+    tags$link(rel = 'stylesheet',
+              href = 'https://cdn.datatables.net/buttons/2.4.1/css/buttons.dataTables.min.css'),
+    tags$script(src = 'https://cdn.datatables.net/buttons/2.4.1/js/dataTables.buttons.min.js'),
+    tags$script(src = 'https://cdn.datatables.net/buttons/2.4.1/js/buttons.colVis.min.js')
+  ),
   fluidRow(
     column(4, align = 'left',
       img(src = 'Qres_DB_logo.png', height = '80px')),
@@ -990,24 +1001,29 @@ server <- function(input, output, session) {
   # ── Initialize DB ──────────────────────────────────────────────────────────
   observeEvent(input$init_db, {
     withProgress(message = 'Initializing database…', {
-      qres_init_schema(con)
+      # Drop all tables and recreate with current schema (handles old DBs)
       qres_reset_tables(con)
+      # Safety net: add any columns that couldn't be dropped/recreated
+      qres_migrate_schema(con)
 
       setProgress(0.15, detail = 'Importing metadata…')
       qres_import_metadata(con, 'data/metaData.csv')
 
       md <- data.table::fread('data/metaData.csv')
+      names(md) <- trimws(tolower(names(md)))   # normalise: dataset_id, raw_file
       n  <- nrow(md)
       for (i in seq_len(n)) {
+        raw_file   <- md$raw_file[i]
+        dataset_id <- md$dataset_id[i]
         setProgress(0.15 + 0.75 * i / n,
-                    detail = paste('Registering', md$File[i], '…'))
-        csv_path <- file.path('data/raw_csv', md$File[i])
+                    detail = paste('Registering', raw_file, '…'))
+        csv_path <- file.path('data/raw_csv', raw_file)
         if (file.exists(csv_path)) {
           tryCatch(
             qres_register_raw_measurements(con,
-              dataset_id = md$Stamp[i],
+              dataset_id = dataset_id,
               raw_csv    = csv_path),
-            error = function(e) message('Skip ', md$Stamp[i], ': ', conditionMessage(e))
+            error = function(e) message('Skip ', dataset_id, ': ', conditionMessage(e))
           )
         }
       }
@@ -1111,8 +1127,54 @@ server <- function(input, output, session) {
   }, ignoreInit = FALSE)
 
   output$dataset_table <- renderDT({
-    datatable(dataset_results(), selection = 'single',
-              options = list(pageLength = 12, scrollX = TRUE))
+    df <- dataset_results()
+    if (nrow(df) == 0) return(datatable(data.frame(message = 'No datasets found. Click "Initialize / refresh DB" first.')))
+
+    # Truncate long fields for display; full value still in download
+    display <- df
+    if ('authors' %in% names(display))
+      display$authors <- ifelse(nchar(display$authors %||% '') > 35,
+                                paste0(substr(display$authors, 1, 35), '…'),
+                                display$authors)
+    if ('doi' %in% names(display))
+      display$doi <- ifelse(nchar(display$doi %||% '') > 22,
+                            paste0(substr(display$doi, 1, 22), '…'),
+                            display$doi)
+    if ('medium_type' %in% names(display))
+      display$medium_type <- ifelse(nchar(display$medium_type %||% '') > 25,
+                                    paste0(substr(display$medium_type, 1, 25), '…'),
+                                    display$medium_type)
+
+    # Column order: most useful first, verbose last
+    col_order <- c('dataset_id', 'species', 'strain', 'temperature_c',
+                   'perturbation_type', 'perturbation', 'medium_type',
+                   'year', 'authors', 'has_raw', 'doi', 'raw_file', 'plate_reader')
+    display <- display[, intersect(col_order, names(display)), drop = FALSE]
+
+    # Columns hidden by default (accessible via column visibility button)
+    hidden_idx <- which(names(display) %in% c('raw_file', 'plate_reader', 'doi')) - 1L
+
+    datatable(display,
+              selection  = 'single',
+              extensions = 'Buttons',
+              options    = list(
+                pageLength  = 12,
+                scrollX     = TRUE,
+                scrollCollapse = TRUE,
+                autoWidth   = FALSE,
+                dom         = 'Bfrtip',
+                buttons     = list(list(extend = 'colvis', text = 'Show/hide columns')),
+                columnDefs  = list(
+                  list(visible = FALSE, targets = hidden_idx),
+                  list(width = '90px',  targets = which(names(display) == 'dataset_id') - 1L),
+                  list(width = '80px',  targets = which(names(display) == 'species') - 1L),
+                  list(width = '55px',  targets = which(names(display) == 'temperature_c') - 1L),
+                  list(width = '110px', targets = which(names(display) == 'perturbation_type') - 1L),
+                  list(width = '130px', targets = which(names(display) %in% c('medium_type','authors')) - 1L),
+                  list(className = 'dt-center', targets = '_all')
+                )
+              ),
+              rownames = FALSE)
   })
 
   # Download current search results as CSV
@@ -1321,10 +1383,43 @@ server <- function(input, output, session) {
 
   output$pub_search_table <- renderDT({
     df <- pub_results()
-    if (is.null(df))    return(datatable(data.frame(message = 'Loading…')))
-    if (nrow(df) == 0)  return(datatable(data.frame(message = 'No datasets match the current filters.')))
-    datatable(df, selection = 'single',
-              options = list(pageLength = 15, scrollX = TRUE))
+    if (is.null(df))   return(datatable(data.frame(message = 'Loading…')))
+    if (nrow(df) == 0) return(datatable(data.frame(message = 'No datasets match the current filters.')))
+
+    # Truncate verbose columns
+    if ('authors' %in% names(df))
+      df$authors <- ifelse(nchar(df$authors %||% '') > 40,
+                           paste0(substr(df$authors, 1, 40), '…'), df$authors)
+    if ('title' %in% names(df))
+      df$title <- ifelse(nchar(df$title %||% '') > 50,
+                         paste0(substr(df$title, 1, 50), '…'), df$title)
+    if ('medium_type' %in% names(df))
+      df$medium_type <- ifelse(nchar(df$medium_type %||% '') > 22,
+                               paste0(substr(df$medium_type, 1, 22), '…'), df$medium_type)
+
+    # Put most-useful columns first, hide verbose ones
+    col_order <- c('dataset_id', 'species', 'medium_type', 'temperature_c',
+                   'perturbation_type', 'perturbation', 'authors', 'year',
+                   'doi', 'plate_reader', 'has_raw', 'title', 'source_url')
+    df <- df[, intersect(col_order, names(df)), drop = FALSE]
+    hidden_idx <- which(names(df) %in% c('title', 'source_url', 'plate_reader')) - 1L
+
+    datatable(df, selection = 'single', rownames = FALSE,
+              extensions = 'Buttons',
+              options = list(
+                pageLength  = 15,
+                scrollX     = TRUE,
+                scrollCollapse = TRUE,
+                dom         = 'Bfrtip',
+                buttons     = list(list(extend = 'colvis', text = 'Columns')),
+                columnDefs  = list(
+                  list(visible = FALSE, targets = hidden_idx),
+                  list(width = '130px', targets = which(names(df) == 'authors') - 1L),
+                  list(width = '90px',  targets = which(names(df) == 'dataset_id') - 1L),
+                  list(className = 'dt-center',
+                       targets = which(names(df) %in% c('temperature_c','year','has_raw')) - 1L)
+                )
+              ))
   })
 
   output$pub_doi_links <- renderUI({
@@ -1806,21 +1901,35 @@ server <- function(input, output, session) {
 
   output$recent_datasets_table <- renderDT({
     input$run_upload
-    qres_init_schema(con)
-    datatable(
-      DBI::dbGetQuery(con, "
+    tryCatch({
+      df <- DBI::dbGetQuery(con, "
         SELECT d.dataset_id, w.species, w.medium_type, p.temperature_c,
                w.perturbation_type, w.perturbation,
-               d.authors, d.year, d.doi,
-               CASE WHEN r.path IS NOT NULL THEN 'yes' ELSE 'no' END AS has_raw
+               d.year,
+               CASE WHEN r.path IS NOT NULL THEN '✓' ELSE '–' END AS raw_data,
+               CASE WHEN ue.released = TRUE OR ue.dataset_id IS NULL
+                    THEN 'public' ELSE 'embargoed' END AS release_status
         FROM dataset d
         LEFT JOIN plate p USING(dataset_id)
         LEFT JOIN (SELECT plate_id, species, medium_type, perturbation_type, perturbation
                    FROM well_metadata GROUP BY 1,2,3,4,5) w USING(plate_id)
         LEFT JOIN raw_measurement_registry r USING(dataset_id)
-        ORDER BY d.import_date DESC LIMIT 30"),
-      options = list(pageLength = 10, scrollX = TRUE)
-    )
+        LEFT JOIN upload_embargo ue USING(dataset_id)
+        ORDER BY d.import_date DESC LIMIT 50")
+
+      if ('medium_type' %in% names(df))
+        df$medium_type <- ifelse(nchar(df$medium_type %||% '') > 22,
+                                 paste0(substr(df$medium_type, 1, 22), '…'), df$medium_type)
+
+      datatable(df, rownames = FALSE,
+                options = list(pageLength = 10, scrollX = TRUE,
+                               scrollCollapse = TRUE, autoWidth = FALSE,
+                               columnDefs = list(
+                                 list(className = 'dt-center',
+                                      targets = which(names(df) %in%
+                                        c('temperature_c','raw_data','release_status','year')) - 1L)
+                               )))
+    }, error = function(e) datatable(data.frame(message = 'No datasets yet.')))
   })
 
   output$download_all_meta <- downloadHandler(

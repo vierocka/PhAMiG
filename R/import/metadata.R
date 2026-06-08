@@ -92,9 +92,15 @@ qres_import_metadata <- function(con, metadata_csv = 'data/metaData.csv') {
     ) |>
     dplyr::distinct(well_id, .keep_all = TRUE)
 
-  DBI::dbWriteTable(con, 'dataset',       dataset,   append = TRUE)
-  DBI::dbWriteTable(con, 'plate',         plate,     append = TRUE)
-  DBI::dbWriteTable(con, 'well_metadata', well_meta, append = TRUE)
+  # Write only columns that exist in the target table (guards against old schemas)
+  .safe_write <- function(con, tbl, df) {
+    existing <- tryCatch(DBI::dbListFields(con, tbl), error = function(e) names(df))
+    DBI::dbWriteTable(con, tbl, df[, intersect(names(df), existing), drop = FALSE],
+                      append = TRUE)
+  }
+  .safe_write(con, 'dataset',       dataset)
+  .safe_write(con, 'plate',         plate)
+  .safe_write(con, 'well_metadata', well_meta)
 
   message(sprintf('[import] %d datasets, %d plates, %d well summary rows written.',
                   nrow(dataset), nrow(plate), nrow(well_meta)))
