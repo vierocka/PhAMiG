@@ -1,0 +1,27 @@
+field,required,level,description,example
+study_id,yes,study,Stable study identifier,10.57745/GCKG7W
+dataset_id,yes,dataset,Stable dataset/run identifier,public_19
+doi,yes,study,Publication or repository DOI,10.57745/GCKG7W
+authors,yes,study,Authors or submitters,"Katipoglu-Yazan et al."
+year,yes,study,Publication/deposition year,2023
+license,yes,study,Reuse license,CC-BY-4.0
+raw_file,yes,dataset,Original raw plate-reader file,Ecoli_MicroplateGrowth_45C_Filtered.csv
+time_unit,yes,dataset,Time unit,hour
+plate_id,yes,plate,Plate/run identifier,public_19__plate_1
+plate_format,yes,plate,Plate format,48
+plate_reader,recommended,plate,Plate reader model,Tecan Infinite
+wavelength_nm,yes,plate,Measurement wavelength,600
+temperature_c,yes,plate,Incubation temperature,45
+shake_freq,recommended,plate,Shaking frequency/amplitude,2.5
+well,yes,well,Well position,A1
+species,yes,well,Species,E. coli
+taxon_id,recommended,well,NCBI TaxID,562
+strain,yes,well,Strain,K12 NCM3722
+medium_type,yes,well,Medium,MOPS with 3 g/L glucose
+perturbation_type,yes,well,chemical/genetic/temperature/none,temperature
+perturbation,recommended,well,Compound/genotype/condition,rifampicin
+concentration,recommended,well,Numeric perturbation concentration,50
+concentration_unit,recommended,well,Concentration unit,mg/L
+is_blank,yes,well,Blank well flag,FALSE
+is_control,yes,well,Untreated/control flag,TRUE
+replicate,recommended,well,Biological/technical replicate,1

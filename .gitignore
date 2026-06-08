@@ -1,0 +1,42 @@
+# ── Generated database files ──────────────────────────────────────────────────
+data/*.duckdb
+data/*.duckdb.wal
+data/parquet/
+data/long_csv/
+
+# ── Sensitive / local-only ────────────────────────────────────────────────────
+.claude/
+.Renviron
+.Rprofile
+.env
+
+# ── R session artefacts ───────────────────────────────────────────────────────
+.Rhistory
+.RData
+.Ruserdata
+*.Rcheck/
+*.tar.gz
+
+# ── Stale flat files (superseded by modular R/ — sourcing them breaks the app) ─
+R/_old_flat/
+
+# ── OS noise ──────────────────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+*~
+\#*\#
+
+# ── Editor ────────────────────────────────────────────────────────────────────
+.vscode/
+.idea/
+*.swp
+
+# ── What IS committed ─────────────────────────────────────────────────────────
+# data/raw_csv/     ← 19 E. coli CSVs (688 KB, public data, Katipoglu-Yazan 2023)
+# data/metaData.csv ← dataset-level metadata
+# R/                ← all application modules
+# app.R             ← Shiny entry point
+# README.md         ← documentation
+# www/              ← static assets (images, CSS)
+# inst/             ← installation helpers
+# Dockerfile        ← container definition
