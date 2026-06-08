@@ -1,101 +1,112 @@
-# Natural language → DuckDB query pipeline via the Anthropic Claude API.
+# LLM-backed NL → filter extraction for PhaMiG.
+# Uses ellmer package: tries Anthropic first (if ANTHROPIC_API_KEY set),
+# then ollama (if running locally). Falls back to rule-based parser silently.
 #
-# Architecture:
-#   user question → Claude (text-to-SQL / action) → DuckDB or R functions → results
-#
-# Requires ANTHROPIC_API_KEY environment variable.
+# mall is also available (loaded in app.R) for future batch column operations.
 
-QRES_LLM_MODEL <- 'claude-sonnet-4-6'
+.PHAMIG_NL_SYSTEM <- paste(
+  'You are a database assistant for PhaMiG, a microbial growth curve database.',
+  'Extract structured search filters from a plain-English query.',
+  'Return ONLY valid JSON with these optional keys:',
+  '  species (string), strain (string), medium (string),',
+  '  temp_min (number), temp_max (number),',
+  '  perturbation_type ("chemical"|"genetic"|"temperature"|"none"),',
+  '  perturbation (string), author (string), year_min (int), year_max (int).',
+  'If a key cannot be inferred, omit it entirely.',
+  'Examples:',
+  '  Query: "E. coli at 35-37C in LB" ->',
+  '    {"species":"E. coli","medium":"LB","temp_min":35,"temp_max":37}',
+  '  Query: "yeast rifampicin dose response 2023" ->',
+  '    {"species":"S. cerevisiae","perturbation":"rifampicin",',
+  '     "perturbation_type":"chemical","year_min":2023,"year_max":2023}',
+  'Return ONLY the JSON object. No explanation, no markdown fences.'
+)
 
-.qres_llm_system_prompt <- function() {
-  paste0(
-    'You are an expert bioinformatics database assistant for Qres DB, ',
-    'a database of microbial growth curves.\n\n',
-    QRES_SCHEMA_CONTEXT, '\n\n',
-    QRES_EXAMPLE_QUERIES, '\n\n',
-    '## Instructions\n',
-    'Given a user question, respond with a single JSON object (no markdown fences) with this structure:\n',
-    '{\n',
-    '  "action": "sql" | "compare_tools" | "info",\n',
-    '  "sql": "SELECT ... (only for action=sql)",\n',
-    '  "description": "Plain-English explanation of what the query does.",\n',
-    '  "plot_type": null | "growth_curves" | "comparison_boxplot" | "comparison_scatter" | "table",\n',
-    '  "compare_params": {\n',
-    '    "species": null | "string",\n',
-    '    "temp_min": null | number,\n',
-    '    "temp_max": null | number,\n',
-    '    "medium":   null | "string",\n',
-    '    "plugins":  ["model_free", "gcplyr", "growthrates", ...],\n',
-    '    "metric":   "mumax_percapita"\n',
-    '  }\n',
-    '}\n',
-    'For action=info respond with just description (no sql or compare_params needed).\n',
-    'Only use table/column names that exist in the schema above.\n',
-    'Return valid DuckDB SQL only. No semicolons. No markdown.'
-  )
+# Detect which LLM backend is available.
+# Returns: "anthropic", "ollama", or "none"
+qres_llm_backend <- function() {
+  if (!requireNamespace('ellmer', quietly = TRUE)) return('none')
+
+  if (nzchar(Sys.getenv('ANTHROPIC_API_KEY'))) return('anthropic')
+
+  # Check if ollama is reachable on the default port
+  ollama_ok <- tryCatch({
+    requireNamespace('httr2', quietly = TRUE) &&
+    httr2::request('http://localhost:11434/api/tags') |>
+      httr2::req_timeout(2) |>
+      httr2::req_perform() |>
+      httr2::resp_status() == 200
+  }, error = function(e) FALSE)
+
+  if (isTRUE(ollama_ok)) return('ollama')
+  'none'
 }
+
+# Cache backend detection per session
+.LLM_BACKEND_CACHE <- new.env(parent = emptyenv())
+.LLM_BACKEND_CACHE$backend <- NA_character_
 
 qres_llm_available <- function() {
-  api_key <- Sys.getenv('ANTHROPIC_API_KEY')
-  nzchar(api_key)
+  if (is.na(.LLM_BACKEND_CACHE$backend))
+    .LLM_BACKEND_CACHE$backend <- qres_llm_backend()
+  .LLM_BACKEND_CACHE$backend != 'none'
 }
 
-qres_nl_to_action <- function(question) {
-  api_key <- Sys.getenv('ANTHROPIC_API_KEY')
-  if (!nzchar(api_key)) {
-    return(list(
-      action      = 'info',
-      description = 'ANTHROPIC_API_KEY is not set. Set it via Sys.setenv(ANTHROPIC_API_KEY = "sk-ant-…") or in your .Renviron file.',
-      sql         = NULL,
-      plot_type   = NULL
-    ))
+qres_llm_backend_name <- function() {
+  if (is.na(.LLM_BACKEND_CACHE$backend))
+    .LLM_BACKEND_CACHE$backend <- qres_llm_backend()
+  .LLM_BACKEND_CACHE$backend
+}
+
+# Build an ellmer chat object for the active backend.
+.qres_make_chat <- function() {
+  backend <- qres_llm_backend_name()
+  if (backend == 'anthropic') {
+    ellmer::chat_anthropic(
+      system_prompt = .PHAMIG_NL_SYSTEM,
+      model         = 'claude-haiku-4-5-20251001'
+    )
+  } else if (backend == 'ollama') {
+    for (model in c('llama3.2', 'llama3', 'gemma2', 'mistral', 'phi3', 'qwen2.5')) {
+      chat <- tryCatch(
+        ellmer::chat_ollama(model = model, system_prompt = .PHAMIG_NL_SYSTEM),
+        error = function(e) NULL
+      )
+      if (!is.null(chat)) return(chat)
+    }
+    NULL
+  } else {
+    NULL
   }
+}
 
-  body <- list(
-    model      = QRES_LLM_MODEL,
-    max_tokens = 1024,
-    system     = .qres_llm_system_prompt(),
-    messages   = list(list(role = 'user', content = question))
-  )
+# Parse NL query via LLM. Returns named list of filters compatible with
+# qres_filter_datasets(), or NULL on failure.
+qres_nl_to_action <- function(text) {
+  chat <- tryCatch(.qres_make_chat(), error = function(e) NULL)
+  if (is.null(chat)) return(NULL)
 
-  resp <- tryCatch({
-    req <- httr2::request('https://api.anthropic.com/v1/messages') |>
-      httr2::req_headers(
-        'x-api-key'         = api_key,
-        'anthropic-version' = '2023-06-01',
-        'content-type'      = 'application/json'
-      ) |>
-      httr2::req_body_json(body) |>
-      httr2::req_timeout(30) |>
-      httr2::req_perform()
-    httr2::resp_body_json(resp)
-  }, error = function(e) {
-    list(error = conditionMessage(e))
-  })
+  raw <- tryCatch(chat$chat(text), error = function(e) NULL)
+  if (is.null(raw) || !nzchar(trimws(raw %||% ''))) return(NULL)
 
-  if (!is.null(resp$error)) {
-    return(list(action = 'info',
-                description = paste('API error:', resp$error),
-                sql = NULL, plot_type = NULL))
-  }
+  # Strip markdown code fences if present
+  json_str <- gsub('^```(?:json)?\\s*|\\s*```$', '', trimws(raw), perl = TRUE)
 
-  raw_text <- tryCatch(resp$content[[1]]$text, error = function(e) '')
-  parsed   <- tryCatch(jsonlite::fromJSON(raw_text, simplifyVector = FALSE),
-                        error = function(e) NULL)
+  filters <- tryCatch(jsonlite::fromJSON(json_str, simplifyVector = TRUE),
+                      error = function(e) NULL)
+  if (is.null(filters) || !is.list(filters)) return(NULL)
 
-  if (is.null(parsed)) {
-    return(list(action = 'info',
-                description = paste('LLM response could not be parsed:', raw_text),
-                sql = NULL, plot_type = NULL))
-  }
+  # Coerce numeric fields
+  for (f in c('temp_min', 'temp_max', 'year_min', 'year_max'))
+    if (!is.null(filters[[f]])) filters[[f]] <- suppressWarnings(as.numeric(filters[[f]]))
 
-  parsed
+  filters
 }
 
 # Execute the action returned by qres_nl_to_action() against the live DB.
 # Returns list(type, data, description, plot_params)
 qres_execute_action <- function(con, action_result, ...) {
-  if (action_result$action == 'sql') {
+  if (!is.null(action_result$sql) && nzchar(action_result$sql %||% '')) {
     sql <- action_result$sql
     df  <- tryCatch(
       DBI::dbGetQuery(con, sql),
@@ -110,7 +121,7 @@ qres_execute_action <- function(con, action_result, ...) {
     ))
   }
 
-  if (action_result$action == 'compare_tools') {
+  if (!is.null(action_result$compare_params)) {
     cp      <- action_result$compare_params %||% list()
     plugins <- unlist(cp$plugins) %||% c('model_free', 'gcplyr', 'growthrates')
     metric  <- cp$metric %||% 'mumax_percapita'
@@ -125,8 +136,10 @@ qres_execute_action <- function(con, action_result, ...) {
     )
 
     if (nrow(filtered) == 0) {
-      return(list(type = 'table', data = data.frame(message = 'No datasets match filter.'),
-                  description = action_result$description %||% '', plot_type = 'table'))
+      return(list(type = 'table',
+                  data = data.frame(message = 'No datasets match filter.'),
+                  description = action_result$description %||% '',
+                  plot_type = 'table'))
     }
 
     all_metrics <- lapply(filtered$dataset_id, function(did) {
@@ -151,8 +164,7 @@ qres_execute_action <- function(con, action_result, ...) {
     ))
   }
 
-  # action == 'info'
   list(type = 'info', data = NULL,
        description = action_result$description %||% '',
-       plot_type = NULL)
+       plot_type   = NULL)
 }

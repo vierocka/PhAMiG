@@ -5,6 +5,9 @@ library(DT)
 library(DBI)
 library(duckdb)
 library(ggplot2)
+# LLM backends: ellmer handles Anthropic + ollama; mall for batch column ops
+if (requireNamespace('ellmer', quietly = TRUE)) library(ellmer)
+if (requireNamespace('mall',   quietly = TRUE)) library(mall)
 
 # ── Module sources (load order matters) ───────────────────────────────────────
 source('R/utils/helpers.R')
@@ -1045,34 +1048,34 @@ server <- function(input, output, session) {
   })
 
   # ── Search ─────────────────────────────────────────────────────────────────
-  # Show a small badge indicating whether NL mode is active
+  # Show which LLM backend is active (none = rule-based only, no key needed)
   output$search_mode_badge <- renderUI({
-    if (qres_llm_available())
-      tags$small(style = 'color:#5cb85c;', '● NL search available')
-    else
-      tags$small(style = 'color:#aaa;', '○ keyword only (no API key)')
+    backend <- tryCatch(qres_llm_backend_name(), error = function(e) 'none')
+    switch(backend,
+      'anthropic' = tags$small(style = 'color:#5cb85c;', '● NL: Anthropic Claude'),
+      'ollama'    = tags$small(style = 'color:#5cb85c;', '● NL: local Ollama'),
+      tags$small(style = 'color:#888;', '● NL: rule-based (always on)')
+    )
   })
 
   observeEvent(input$run_search, {
     qres_init_schema(con)
     q <- trimws(input$search %||% '')
 
-    # Perturbation filters from sidebar selectors (always applied)
+    # Sidebar perturbation overrides (always applied on top of any parsed result)
     perturb_type <- if (nzchar(input$search_perturb_type %||% '') &&
                         input$search_perturb_type != 'all')
       input$search_perturb_type else NULL
     perturb_name <- if (nzchar(trimws(input$search_perturb %||% '')))
       trimws(input$search_perturb) else NULL
 
-    # Rule-based NL parsing (free, no API key needed)
-    # Activates for sentence-like queries (>20 chars, spaces, not a bare DOI)
-    use_rule_nl <- nchar(q) > 20 && grepl('\\s', q) && !grepl('^10\\.', q)
-
-    if (use_rule_nl) {
+    # ── Step 1: Rule-based NL parser (always runs, no key needed) ─────────
+    # Handles: species names, temperature ranges ("35-37", "35 to 37", "37°C"),
+    # medium names, drug names, author patterns, year ranges.
+    if (nzchar(q) && !grepl('^10\\.', q)) {   # skip bare DOIs
       parsed <- tryCatch(qres_parse_nl_query(q), error = function(e) NULL)
 
       if (!is.null(parsed) && length(parsed) > 0) {
-        # Merge sidebar perturbation overrides
         if (!is.null(perturb_type)) parsed$perturbation_type <- perturb_type
         if (!is.null(perturb_name)) parsed$perturbation      <- perturb_name
 
@@ -1083,25 +1086,30 @@ server <- function(input, output, session) {
         if (!is.null(rows) && nrow(rows) > 0) {
           dataset_results(rows)
           showNotification(
-            paste0('Rule NL: ', length(parsed), ' filter(s) extracted from query.'),
+            paste0('Matched ', nrow(rows), ' dataset(s) — filters: ',
+                   paste(names(parsed), collapse = ', ')),
             type = 'message', duration = 4)
           return()
         }
       }
 
-      # Claude fallback when API key present and rule parser found nothing
+      # ── Step 2: LLM fallback (ellmer — anthropic or ollama) ───────────
       if (qres_llm_available()) {
-        withProgress(message = 'Asking Claude for query interpretation…', {
-          action <- tryCatch(qres_nl_to_action(q), error = function(e) NULL)
+        withProgress(message = paste0('Asking ', qres_llm_backend_name(), '…'), {
+          filters <- tryCatch(qres_nl_to_action(q), error = function(e) NULL)
 
-          if (!is.null(action) && identical(action$action, 'sql') &&
-              nzchar(action$sql %||% '')) {
-            rows <- tryCatch(DBI::dbGetQuery(con, action$sql), error = function(e) NULL)
-            if (!is.null(rows) && 'dataset_id' %in% names(rows)) {
+          if (!is.null(filters) && length(filters) > 0) {
+            if (!is.null(perturb_type)) filters$perturbation_type <- perturb_type
+            if (!is.null(perturb_name)) filters$perturbation      <- perturb_name
+            rows <- tryCatch(
+              do.call(qres_filter_datasets, c(list(con = con, registered_only = FALSE), filters)),
+              error = function(e) NULL
+            )
+            if (!is.null(rows) && nrow(rows) > 0) {
               dataset_results(rows)
               showNotification(
-                paste0('Claude NL: ', action$description %||% q),
-                type = 'message', duration = 5)
+                paste0('LLM matched ', nrow(rows), ' dataset(s)'),
+                type = 'message', duration = 4)
               return()
             }
           }
