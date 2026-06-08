@@ -80,6 +80,7 @@ qres_init_schema <- function(con) {
       parameters_json  TEXT,
       status           TEXT,
       message          TEXT,
+      container_hash   TEXT,
       created_at       TIMESTAMP DEFAULT current_timestamp
     )
   ")
@@ -164,6 +165,8 @@ qres_migrate_schema <- function(con) {
   tryCatch(DBI::dbExecute(con, "ALTER TABLE dataset ADD COLUMN IF NOT EXISTS notes TEXT"),
            error = function(e) NULL)
   tryCatch(DBI::dbExecute(con, "ALTER TABLE plate ADD COLUMN IF NOT EXISTS shake_freq_rpm DOUBLE"),
+           error = function(e) NULL)
+  tryCatch(DBI::dbExecute(con, "ALTER TABLE processing_run ADD COLUMN IF NOT EXISTS container_hash TEXT"),
            error = function(e) NULL)
   # Embargo tables (added in session 3 — safe to run on older DBs)
   qres_init_schema(con)   # CREATE TABLE IF NOT EXISTS is idempotent
