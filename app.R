@@ -728,22 +728,35 @@ ui_submit <- fluidPage(
         '  Visit ', tags$strong('Metadata Preparation'), ' first to generate the plate template CSV.',
         tags$br(),
         tags$strong('Steps: '),
-        '① fill required fields  ② choose release mode  ③ click Register'
+        '① fill required fields  ② choose release mode  ③ click Register',
+        tags$hr(style = 'margin: 6px 0;'),
+        icon('file-excel'), tags$strong(' Multi-plate Excel upload: '),
+        'Raw data can also be uploaded as an ', tags$strong('.xlsx'), ' file — each sheet must follow',
+        ' the same format as the CSV template (first column ', tags$code('Time'),
+        ', remaining columns = well names ', tags$code('A1'), ' … ', tags$code('H12'), ').',
+        ' If you upload a multi-sheet Excel file, the plate template must also be an ',
+        tags$strong('.xlsx'), ' file with the ', tags$strong('same number of sheets in the same order'),
+        ': sheet 1 of the template describes the layout of sheet 1 of the raw data, sheet 2 of sheet 2, and so on.'
       ),
       fluidRow(
         column(12,
           wellPanel(
             # STEP 1: Files
             tags$p(class = 'step-label', '① Files'),
-            fileInput('upload_raw_csv',
-              req_label('Raw data CSV',
-                'CSV file from your plate reader. Column 1 must be named "time" (values in hours by default). Columns 2–N are OD values; headers = well names A1, A2 … H12. At least 5 time points and 2 wells required.'),
-              accept = '.csv', buttonLabel = 'Browse…', placeholder = 'No file selected'),
+            tags$div(style = 'position:relative;',
+              fileInput('upload_raw_csv',
+                req_label('Raw data file (.csv or .xlsx)',
+                  'CSV or Excel file from your plate reader. First column must be named "Time" (HH:MM:SS or decimal hours). Remaining columns are OD values with well names A1, A2 … H12 as headers. At least 5 time points and 2 wells required. For Excel: each sheet = one plate measurement.'),
+                accept = c('.csv', '.xlsx'), buttonLabel = 'Browse…', placeholder = 'No file selected'),
+              tags$div(style = 'position:absolute; top:0; right:0;',
+                actionButton('show_demo_raw', 'Demo file',
+                             class = 'btn btn-xs btn-info', icon = icon('table')))
+            ),
             tags$div(style = 'position:relative;',
               fileInput('upload_meta_csv',
-                opt_label('Plate template CSV',
-                  'Generated on the Metadata Preparation page. Describes per-well conditions (perturbation, concentration, blank/control flags). Without it, one summary row is created for the whole plate.'),
-                accept = '.csv', buttonLabel = 'Browse…', placeholder = 'No file selected (optional)'),
+                opt_label('Plate template (.csv or .xlsx)',
+                  'Generated on the Metadata Preparation page. Describes per-well conditions (perturbation, concentration, blank/control flags). Without it, one summary row is created for the whole plate. For multi-sheet Excel uploads: provide a matching .xlsx with the same number of sheets in the same order.'),
+                accept = c('.csv', '.xlsx'), buttonLabel = 'Browse…', placeholder = 'No file selected (optional)'),
               tags$div(style = 'position:absolute; top:0; right:0;',
                 tags$a(href = route_link('metadata_prep'),
                   class = 'btn btn-xs btn-default',
@@ -808,6 +821,65 @@ ui_submit <- fluidPage(
             textAreaInput('upload_notes',
               opt_label('Notes', 'Free-text notes about this dataset. Max 1000 characters.'),
               rows = 2, placeholder = 'e.g. Outlier wells removed; temperature drifted ±0.5°C'),
+
+            # Instrument & plate details (optional)
+            tags$p(class = 'step-label', '○ Instrument & plate details (optional)'),
+            fluidRow(
+              column(5,
+                textInput('upload_plate_reader',
+                  opt_label('Device / plate reader',
+                    'Brand and model of the plate reader. Example: Tecan Infinite 200 Pro, BioTek Synergy HTX.'),
+                  placeholder = 'e.g. Tecan Infinite 200 Pro')),
+              column(3,
+                numericInput('upload_wavelength',
+                  opt_label('Wavelength (nm)',
+                    'Measurement wavelength. OD600 is standard for bacterial growth; OD750 is used for cyanobacteria.'),
+                  value = 600, min = 200, max = 1000)),
+              column(4,
+                textInput('upload_spectrophotometer',
+                  opt_label('Spectrophotometer model',
+                    'If different from the plate reader field (some labs use a separate spectrophotometer for cuvette measurements).'),
+                  placeholder = 'optional'))
+            ),
+            fluidRow(
+              column(4,
+                selectInput('upload_plate_format',
+                  opt_label('Plate format',
+                    'Number of wells. 96-well is standard; 48- and 384-well plates are also supported.'),
+                  choices = c('96-well' = '96', '48-well' = '48', '384-well' = '384', 'other' = 'other'),
+                  selected = '96')),
+              column(4,
+                selectInput('upload_plate_colour',
+                  opt_label('Plate colour / material',
+                    'Optical properties of the plate bottom. Transparent is standard for absorbance; white increases fluorescence signal; black reduces background fluorescence.'),
+                  choices = c('transparent' = 'transparent', 'white' = 'white',
+                              'black' = 'black', 'other' = 'other'),
+                  selected = 'transparent')),
+              column(4,
+                radioButtons('upload_lid', opt_label('Lid', 'Whether a lid was used during measurement. Lids reduce evaporation but may affect OD readings in some readers.'),
+                  choices = c('Yes' = 'TRUE', 'No' = 'FALSE'), selected = 'TRUE', inline = TRUE))
+            ),
+            fluidRow(
+              column(3,
+                numericInput('upload_shake_rpm',
+                  opt_label('Shaking (rpm)', 'Orbital shaking frequency during measurement. 0 = no shaking.'),
+                  value = NA, min = 0, max = 2000)),
+              column(3,
+                selectInput('upload_time_unit',
+                  opt_label('Time unit', 'Unit of the Time column in the raw data file.'),
+                  choices = c('hours' = 'h', 'minutes' = 'min', 'seconds' = 's'),
+                  selected = 'h')),
+              column(3,
+                textInput('upload_strain',
+                  opt_label('Strain',
+                    'Strain name or identifier. Used as a dataset-wide default; can be overridden per well in the plate template.'),
+                  placeholder = 'e.g. K12 NCM3722')),
+              column(3,
+                textInput('upload_taxon_id',
+                  opt_label('NCBI Taxon ID',
+                    'Numeric NCBI Taxonomy identifier. Dataset-wide default; overridable per well. Example: 562 for E. coli, 4932 for S. cerevisiae.'),
+                  placeholder = '562'))
+            ),
 
             # STEP 3: Embargo / access control
             tags$p(class = 'step-label', '③ Data access & release'),
@@ -2102,6 +2174,55 @@ server <- function(input, output, session) {
     content  = function(file) write.csv(plateMatrix(), file, row.names = FALSE)
   )
 
+  # ── Demo raw CSV modal ────────────────────────────────────────────────────
+  .demo_raw_path <- 'data/raw_csv/raw_data_template.csv'
+
+  observeEvent(input$show_demo_raw, {
+    df <- tryCatch(
+      read.csv(.demo_raw_path, check.names = FALSE, stringsAsFactors = FALSE),
+      error = function(e) NULL)
+
+    showModal(modalDialog(
+      title = tagList(icon('table'), ' Raw data CSV — format reference'),
+      size  = 'l',
+      easyClose = TRUE,
+      footer = tagList(
+        downloadButton('download_demo_raw', 'Download template', class = 'btn-success btn-sm'),
+        modalButton('Close')
+      ),
+
+      tags$div(class = 'alert alert-info', style = 'font-size:13px; padding:8px 12px; margin-bottom:10px;',
+        tags$strong('Required format:'), ' First column = ', tags$code('Time'),
+        ' (HH:MM:SS or decimal hours). Remaining columns = well names ',
+        tags$code('A1'), ', ', tags$code('A2'), ' … ', tags$code('H12'),
+        ' containing OD values. One row per time point. At least 5 time points and 2 wells required.',
+        tags$br(),
+        tags$span(style = 'color:#31708f;',
+          'Preview shows the first 5 rows and first 7 columns of a 96-well template (',
+          if (!is.null(df)) paste0(nrow(df), ' time points, ', ncol(df) - 1, ' wells') else '?',
+          ').')
+      ),
+
+      if (is.null(df)) {
+        tags$p(class = 'text-danger', 'Template file not found.')
+      } else {
+        preview <- df[seq_len(min(5, nrow(df))), seq_len(min(7, ncol(df))), drop = FALSE]
+        tableOutput('demo_raw_table')
+      }
+    ))
+
+    if (!is.null(df)) {
+      preview <- df[seq_len(min(5, nrow(df))), seq_len(min(7, ncol(df))), drop = FALSE]
+      output$demo_raw_table <- renderTable(preview, striped = TRUE, bordered = TRUE,
+                                           spacing = 'xs', align = 'c')
+    }
+  })
+
+  output$download_demo_raw <- downloadHandler(
+    filename = 'raw_data_template.csv',
+    content  = function(file) file.copy(.demo_raw_path, file)
+  )
+
   # ── Data upload ────────────────────────────────────────────────────────────
   # Reactive to hold the access key from last upload (shown once, not stored plain-text)
   last_access_key <- reactiveVal(NULL)
@@ -2222,11 +2343,17 @@ server <- function(input, output, session) {
         temperature_c     = temp_c,
         perturbation_type = ptype,
         perturbation      = if (ptype == 'temperature') as.character(temp_c) else NA_character_,
-        strain            = NA_character_,
-        taxon_id          = NA_character_,
+        strain            = trimws(input$upload_strain    %||% ''),
+        taxon_id          = trimws(input$upload_taxon_id  %||% ''),
         medium_state      = 'liquid',
-        plate_reader      = NA_character_,
-        time_unit         = 'h',
+        plate_format      = input$upload_plate_format  %||% '96',
+        plate_colour      = input$upload_plate_colour  %||% 'transparent',
+        lid               = input$upload_lid           %||% 'TRUE',
+        plate_reader      = trimws(input$upload_plate_reader      %||% ''),
+        spectrophotometer = trimws(input$upload_spectrophotometer %||% ''),
+        wavelength_nm     = suppressWarnings(as.numeric(input$upload_wavelength %||% 600)),
+        shake_freq_rpm    = suppressWarnings(as.numeric(input$upload_shake_rpm  %||% NA)),
+        time_unit         = input$upload_time_unit %||% 'h',
         authors           = trimws(input$upload_authors %||% ''),
         year              = suppressWarnings(as.integer(input$upload_year %||% NA)),
         doi               = trimws(input$upload_doi    %||% ''),

@@ -17,8 +17,9 @@ PHAMIG_REQUIRED_COLS <- c('dataset_id', 'raw_file', 'species', 'medium_type',
 
 PHAMIG_OPTIONAL_COLS <- c('perturbation', 'strain', 'taxon_id', 'medium_state',
                            'concentration', 'concentration_unit', 'plate_format',
-                           'plate_reader', 'wavelength_nm', 'shake_freq_rpm',
-                           'spectrophotometer', 'time_unit', 'authors', 'year', 'doi', 'notes')
+                           'plate_colour', 'lid', 'plate_reader', 'wavelength_nm',
+                           'shake_freq_rpm', 'spectrophotometer', 'time_unit',
+                           'authors', 'year', 'doi', 'notes')
 
 PHAMIG_ALL_COLS <- c(PHAMIG_REQUIRED_COLS, PHAMIG_OPTIONAL_COLS)
 
@@ -68,7 +69,9 @@ qres_import_metadata <- function(con, metadata_csv = 'data/metaData.csv') {
     dplyr::transmute(
       plate_id          = paste0(dataset_id, '__plate_1'),
       dataset_id,
-      plate_format, plate_reader, spectrophotometer,
+      plate_format, plate_colour,
+      lid               = as.logical(lid),
+      plate_reader, spectrophotometer,
       wavelength_nm, temperature_c, shake_freq_rpm
     ) |>
     dplyr::distinct(plate_id, .keep_all = TRUE)
