@@ -774,16 +774,6 @@ ui_submit <- fluidPage(
               )
             ),
             fluidRow(
-              column(6, selectInput('upload_perturb_type',
-                req_label('Perturbation type',
-                  'The main experimental variable. "chemical+genetic" is for combined stressor + mutant experiments where concentration stores two semicolon-separated values (see Metadata Prep).'),
-                choices = c(
-                  'none'               = 'none',
-                  'Chemical stressor'  = 'chemical',
-                  'Genetic modification' = 'genetic',
-                  'Chemical + Genetic' = 'chemical_genetic',
-                  'Temperature gradient' = 'temperature'
-                ))),
               column(6, textInput('upload_temp_c',
                 req_label('Temperature (°C)',
                   'Incubation temperature in degrees Celsius. Valid range: -5 to 105. Example: 37'),
@@ -842,20 +832,14 @@ ui_submit <- fluidPage(
                   placeholder = 'optional'))
             ),
             fluidRow(
-              column(4,
-                selectInput('upload_plate_format',
-                  opt_label('Plate format',
-                    'Number of wells. 96-well is standard; 48- and 384-well plates are also supported.'),
-                  choices = c('96-well' = '96', '48-well' = '48', '384-well' = '384', 'other' = 'other'),
-                  selected = '96')),
-              column(4,
+              column(6,
                 selectInput('upload_plate_colour',
                   opt_label('Plate colour / material',
                     'Optical properties of the plate bottom. Transparent is standard for absorbance; white increases fluorescence signal; black reduces background fluorescence.'),
                   choices = c('transparent' = 'transparent', 'white' = 'white',
                               'black' = 'black', 'other' = 'other'),
                   selected = 'transparent')),
-              column(4,
+              column(6,
                 radioButtons('upload_lid', opt_label('Lid', 'Whether a lid was used during measurement. Lids reduce evaporation but may affect OD readings in some readers.'),
                   choices = c('Yes' = 'TRUE', 'No' = 'FALSE'), selected = 'TRUE', inline = TRUE))
             ),
@@ -2260,7 +2244,6 @@ server <- function(input, output, session) {
     species       <- trimws(input$upload_species      %||% '')
     medium        <- trimws(input$upload_medium       %||% '')
     temp_c        <- suppressWarnings(as.numeric(input$upload_temp_c %||% NA))
-    ptype         <- input$upload_perturb_type %||% 'none'
     email         <- trimws(tolower(input$upload_email        %||% ''))
     passphrase    <- input$upload_passphrase  %||% ''
     passphrase2   <- input$upload_passphrase2 %||% ''
@@ -2276,7 +2259,6 @@ server <- function(input, output, session) {
     if (!nzchar(species))     errs <- c(errs, 'Species is required.')
     if (!nzchar(medium))      errs <- c(errs, 'Medium type is required.')
     if (!is.finite(temp_c))   errs <- c(errs, 'Temperature (°C) must be a number.')
-    if (!nzchar(ptype))       errs <- c(errs, 'Perturbation type is required.')
 
     # Embargo auth fields
     if (!nzchar(email) || !grepl('@', email))
@@ -2345,12 +2327,10 @@ server <- function(input, output, session) {
         species           = species,
         medium_type       = medium,
         temperature_c     = temp_c,
-        perturbation_type = ptype,
-        perturbation      = if (ptype == 'temperature') as.character(temp_c) else NA_character_,
+        perturbation_type = 'none',
         strain            = trimws(input$upload_strain    %||% ''),
         taxon_id          = trimws(input$upload_taxon_id  %||% ''),
         medium_state      = 'liquid',
-        plate_format      = input$upload_plate_format  %||% '96',
         plate_colour      = input$upload_plate_colour  %||% 'transparent',
         lid               = input$upload_lid           %||% 'TRUE',
         plate_reader      = trimws(input$upload_plate_reader      %||% ''),
@@ -2384,7 +2364,8 @@ server <- function(input, output, session) {
         con, dataset_id, email, passphrase,
         release_mode = release_mode,
         release_date = if (release_mode == 'date') release_date else NA,
-        biorxiv_url  = if (release_mode == 'biorxiv') biorxiv_url else NA
+        biorxiv_url  = if (release_mode == 'biorxiv') biorxiv_url else NA,
+        orcid        = trimws(input$upload_orcid %||% '')
       )
 
       # Show access key prominently (only once)
