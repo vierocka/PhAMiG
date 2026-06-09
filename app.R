@@ -51,8 +51,10 @@ bottom_nav <- tagList(
     .bottom-fixed {
       position: fixed; bottom: 0; width: 100%;
       background-color: #f8f8f8; border-top: 1px solid #ddd;
-      padding: 8px 0; z-index: 1000; text-align: center;
+      padding: 0; z-index: 1000; font-size: 15px;
     }
+    .bottom-fixed a { text-decoration: none; color: #337ab7; }
+    .bottom-fixed a:hover { color: #23527c; }
     .pictogram-caption { font-weight: bold; margin-top: 6px; }
     .pictogram-cell img:hover { opacity: 0.8; transform: scale(1.05);
       transition: all 0.2s ease; }
@@ -60,8 +62,13 @@ bottom_nav <- tagList(
   "))),
   tags$div(
     class = 'bottom-fixed',
-    tags$a(href = route_link('/'), icon('home'), ' Home',
-           style = 'font-size:15px; text-decoration:none; color:#337ab7;')
+    tags$div(class = 'row', style = 'margin:0;',
+      tags$div(class = 'col-xs-6', style = 'text-align:center; padding:10px 0; border-right:1px solid #ddd;',
+        tags$a(href = route_link('/'), icon('home'), ' Home')),
+      tags$div(class = 'col-xs-6', style = 'text-align:center; padding:10px 0;',
+        tags$a(href = '#', onclick = 'history.back(); return false;',
+               icon('arrow-left'), ' Return'))
+    )
   )
 )
 
@@ -724,43 +731,65 @@ ui_submit <- fluidPage(
         '① fill required fields  ② choose release mode  ③ click Register'
       ),
       fluidRow(
-        column(5,
-          # STEP 1: Files
+        column(12,
           wellPanel(
+            # STEP 1: Files
             tags$p(class = 'step-label', '① Files'),
             fileInput('upload_raw_csv',
               req_label('Raw data CSV',
                 'CSV file from your plate reader. Column 1 must be named "time" (values in hours by default). Columns 2–N are OD values; headers = well names A1, A2 … H12. At least 5 time points and 2 wells required.'),
               accept = '.csv', buttonLabel = 'Browse…', placeholder = 'No file selected'),
-            fileInput('upload_meta_csv',
-              opt_label('Plate template CSV',
-                'Generated on the Metadata Preparation page. Describes per-well conditions (species, medium, concentration). Without it, one summary row is created for the whole plate.'),
-              accept = '.csv', buttonLabel = 'Browse…', placeholder = 'No file selected (optional)'),
+            tags$div(style = 'position:relative;',
+              fileInput('upload_meta_csv',
+                opt_label('Plate template CSV',
+                  'Generated on the Metadata Preparation page. Describes per-well conditions (perturbation, concentration, blank/control flags). Without it, one summary row is created for the whole plate.'),
+                accept = '.csv', buttonLabel = 'Browse…', placeholder = 'No file selected (optional)'),
+              tags$div(style = 'position:absolute; top:0; right:0;',
+                tags$a(href = route_link('metadata_prep'),
+                  class = 'btn btn-xs btn-default',
+                  icon('arrow-right'), ' Go to Metadata Prep'))
+            ),
 
-            # STEP 2: Biological metadata
+            # STEP 2: Dataset metadata
             tags$p(class = 'step-label', '② Dataset metadata'),
-            textInput('upload_dataset_id',
-              req_label('Dataset ID',
-                'Unique identifier linking all tables. Allowed characters: letters, digits, underscore, hyphen, dot. Max 100 characters. Example: ecoli_MOPS_37C_2026_smith'),
-              placeholder = 'ecoli_MOPS_37C_2026_smith', value = ''),
+            fluidRow(
+              column(8,
+                textInput('upload_dataset_id',
+                  req_label('Dataset ID',
+                    'Unique identifier linking all tables. Allowed characters: letters, digits, underscore, hyphen, dot. Max 100 characters. Example: ecoli_MOPS_37C_2026_smith'),
+                  placeholder = 'ecoli_MOPS_37C_2026_smith', value = '')
+              )
+            ),
             fluidRow(
               column(6, selectInput('upload_perturb_type',
                 req_label('Perturbation type',
-                  'The main experimental variable. Use "temperature" when you grew bacteria at different temperatures. Use "chemical" for drugs, antibiotics. "genetic" for mutants. "none" for untreated controls.'),
-                choices = c('none', 'chemical', 'genetic', 'temperature'))),
+                  'The main experimental variable. "chemical+genetic" is for combined stressor + mutant experiments where concentration stores two semicolon-separated values (see Metadata Prep).'),
+                choices = c(
+                  'none'               = 'none',
+                  'Chemical stressor'  = 'chemical',
+                  'Genetic modification' = 'genetic',
+                  'Chemical + Genetic' = 'chemical_genetic',
+                  'Temperature gradient' = 'temperature'
+                ))),
               column(6, textInput('upload_temp_c',
                 req_label('Temperature (°C)',
-                  'Measurement temperature in degrees Celsius. Valid range: -5 to 105. Example: 37'),
+                  'Incubation temperature in degrees Celsius. Valid range: -5 to 105. Example: 37'),
                 placeholder = '37'))
             ),
-            textInput('upload_species',
-              req_label('Species',
-                'Scientific or common name. Max 120 characters. Examples: "Escherichia coli", "Saccharomyces cerevisiae", "Bacillus subtilis"'),
-              placeholder = 'Escherichia coli'),
-            textInput('upload_medium',
-              req_label('Medium type',
-                'Growth medium full description. Max 200 characters. Examples: "LB", "MOPS + 3 g/L glucose", "YPD", "Modified Mueller-Hinton broth pH 7.4"'),
-              placeholder = 'MOPS + 3 g/L glucose'),
+            fluidRow(
+              column(6,
+                textInput('upload_species',
+                  req_label('Species',
+                    'Scientific or common name. Max 120 characters. Examples: "Escherichia coli", "Saccharomyces cerevisiae", "Bacillus subtilis"'),
+                  placeholder = 'Escherichia coli')
+              ),
+              column(6,
+                textInput('upload_medium',
+                  req_label('Medium type',
+                    'Growth medium full description. Max 200 characters. Examples: "LB", "MOPS + 3 g/L glucose", "YPD"'),
+                  placeholder = 'MOPS + 3 g/L glucose')
+              )
+            ),
 
             # Publication (optional)
             tags$p(class = 'step-label', '○ Publication info (optional)'),
@@ -769,11 +798,11 @@ ui_submit <- fluidPage(
                 'Author list as it appears in the paper. Semicolon-separated. Max 500 characters. Example: "Smith, J.; Doe, A.; Brown, C."'),
               placeholder = 'Smith, J.; Doe, A.'),
             fluidRow(
-              column(5, numericInput('upload_year',
+              column(3, numericInput('upload_year',
                 opt_label('Year', 'Year of publication or data collection. Range 1950–2035.'),
                 value = as.integer(format(Sys.Date(), '%Y')), min = 1950, max = 2035)),
-              column(7, textInput('upload_doi',
-                opt_label('DOI', 'Digital Object Identifier. Must start with "10." Example: 10.1038/nature12345. Max 200 characters.'),
+              column(9, textInput('upload_doi',
+                opt_label('DOI', 'Digital Object Identifier. Must start with "10." Example: 10.1038/nature12345.'),
                 placeholder = '10.1234/journal.xxx'))
             ),
             textAreaInput('upload_notes',
@@ -786,8 +815,8 @@ ui_submit <- fluidPage(
               helpText(icon('lock'), ' Unpublished data can be stored privately until you are ready to release it. You always need your email + access key + passphrase to delete your dataset.'),
               radioButtons('upload_release_mode', NULL,
                 choices = c(
-                  'immediate'  = 'immediate',
-                  'Set a release date'  = 'date',
+                  'Immediate (already published)'  = 'immediate',
+                  'Set a release date'             = 'date',
                   'bioRxiv preprint — release on journal publication' = 'biorxiv'
                 ),
                 selected = 'immediate'),
@@ -804,42 +833,40 @@ ui_submit <- fluidPage(
                   placeholder = 'https://www.biorxiv.org/content/10.1101/2024.01.01.000001')
               ),
               hr(style = 'margin: 8px 0;'),
-              textInput('upload_email',
-                req_label('Your email',
-                  'Needed to verify your identity for deletion. Not stored in plain text beyond the embargo table. Max 200 characters.'),
-                placeholder = 'yourname@institution.edu'),
-              passwordInput('upload_passphrase',
-                req_label('Choose a passphrase (≥8 characters)',
-                  'A phrase you will remember — NOT your password. Example: the name of the organism you study. It is hashed (SHA-256) before storage; we never see the plain text. You need it later to delete your dataset.'),
-                placeholder = '≥ 8 characters, e.g. Escherichia2026'),
-              passwordInput('upload_passphrase2',
-                req_label('Confirm passphrase',
-                  'Re-enter your passphrase to confirm. It must match exactly.'),
-                placeholder = 'repeat your passphrase')
+              fluidRow(
+                column(6,
+                  textInput('upload_email',
+                    req_label('Your email',
+                      'Needed to verify your identity for deletion. Not stored in plain text. Max 200 characters.'),
+                    placeholder = 'yourname@institution.edu')
+                ),
+                column(6,
+                  passwordInput('upload_passphrase',
+                    req_label('Passphrase (≥8 characters)',
+                      'A phrase you will remember — NOT your login password. Hashed (SHA-256) before storage. Needed later to delete your dataset.'),
+                    placeholder = '≥ 8 characters'),
+                  passwordInput('upload_passphrase2',
+                    req_label('Confirm passphrase', 'Must match exactly.'),
+                    placeholder = 'repeat your passphrase')
+                )
+              )
             ),
 
             br(),
-            checkboxInput('upload_run_analysis',
-              tagList('Run quick analysis (model_free) after upload',
-                      tip('Automatically estimates doubling time, mumax, and AUC for all wells using the model-free method. Results appear in the Analyse tab. Takes 5–30 seconds depending on plate size.')),
-              value = TRUE),
+            fluidRow(
+              column(8,
+                checkboxInput('upload_run_analysis',
+                  tagList('Run quick analysis (model_free) after upload',
+                    tip('Automatically estimates doubling time, mumax, and AUC for all wells using the model-free method. Results appear in the Analyse tab. Takes 5–30 seconds depending on plate size.')),
+                  value = TRUE)
+              )
+            ),
             uiOutput('upload_progress_ui'),
+            uiOutput('upload_key_display'),
+            verbatimTextOutput('upload_status'),
             actionButton('run_upload', tags$span(icon('upload'), ' Register in database'),
                          class = 'btn-primary btn-lg', width = '100%')
           )
-        ),
-        column(7,
-          uiOutput('upload_key_display'),
-          br(),
-          h5('Upload status'),
-          verbatimTextOutput('upload_status'),
-          br(),
-          h5('My registered datasets'),
-          helpText('Shows all your datasets. Embargoed datasets are only visible to you here, not in Search.'),
-          DTOutput('recent_datasets_table'),
-          br(),
-          downloadButton('download_all_meta', 'Download all metadata (CSV)',
-                         class = 'btn-default')
         )
       )
     ),
