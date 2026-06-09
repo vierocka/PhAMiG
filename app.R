@@ -871,7 +871,14 @@ ui_submit <- fluidPage(
             ),
 
             # STEP 3: Embargo / access control
-            tags$p(class = 'step-label', '③ Data access & release'),
+            tags$p(class = 'step-label',
+              '③ Data access & release',
+              tags$small(
+                actionLink('show_release_conditions',
+                           tagList(icon('info-circle'), ' Conditions'),
+                           style = 'margin-left:8px; font-size:12px; font-weight:normal; vertical-align:middle;')
+              )
+            ),
             tags$div(class = 'embargo-panel',
               helpText(icon('lock'), ' Unpublished data can be stored privately until you are ready to release it. You always need your email + access key + passphrase to delete your dataset.'),
               radioButtons('upload_release_mode', NULL,
@@ -975,6 +982,36 @@ ui_submit <- fluidPage(
                          class = 'btn-danger', width = '100%'),
             br(), br(),
             verbatimTextOutput('delete_status')
+          ),
+          br(),
+          tags$div(class = 'manage-panel',
+            h4(icon('wrench'), ' Request a correction'),
+            helpText('Use this if you uploaded a mismatched or incorrect metadata–raw data pair.',
+                     'Your embargo record and access credentials are preserved;',
+                     'only the uploaded files are cleared so you can re-submit corrected data',
+                     'under the same dataset ID in the "Upload raw data" tab.'),
+            br(),
+            textInput('reopen_dataset_id',
+              req_label('Dataset ID',
+                'Exact dataset_id as used at upload. Case-sensitive.'),
+              placeholder = 'ecoli_MOPS_37C_2026_smith'),
+            textInput('reopen_email',
+              req_label('Your email',
+                'Same email address provided at upload.'),
+              placeholder = 'yourname@institution.edu'),
+            textInput('reopen_access_key',
+              req_label('32-character access key',
+                'The access key shown once after upload.'),
+              placeholder = 'ABCDEFGHIJKLMNOPabcdefghijklmnop'),
+            passwordInput('reopen_passphrase',
+              req_label('Passphrase',
+                'The passphrase you chose at upload.'),
+              placeholder = 'your passphrase'),
+            br(),
+            actionButton('run_reopen', tags$span(icon('wrench'), ' Clear upload & reopen'),
+                         class = 'btn-warning', width = '100%'),
+            br(), br(),
+            verbatimTextOutput('reopen_status')
           )
         ),
         column(6,
@@ -2170,6 +2207,37 @@ server <- function(input, output, session) {
   # ── Demo raw CSV modal ────────────────────────────────────────────────────
   .demo_raw_path <- 'data/raw_csv/raw_data_template.csv'
 
+  observeEvent(input$show_release_conditions, {
+    showModal(modalDialog(
+      title = tagList(icon('lock'), ' Data access & release conditions'),
+      size  = 'm',
+      easyClose = TRUE,
+      footer = modalButton('Close'),
+      h5(icon('info-circle'), ' About data release modes'),
+      tags$dl(
+        tags$dt(icon('globe'), ' Immediate release'),
+        tags$dd('Data is publicly searchable in PhaMiG as soon as it is registered. Use this for already-published datasets.'),
+        br(),
+        tags$dt(icon('calendar'), ' Set a release date'),
+        tags$dd('Data remains private until the chosen date. PhaMiG automatically releases it at midnight on that date. Useful when you know your submission or conference date.'),
+        br(),
+        tags$dt(icon('file-alt'), ' bioRxiv preprint'),
+        tags$dd('Data remains private while your work is a preprint. PhaMiG polls the bioRxiv API every month. When your preprint receives a journal DOI, the data is released automatically. You will need to provide the bioRxiv URL or DOI.'),
+        br(),
+        tags$dt(icon('trash'), ' Deleting your data'),
+        tags$dd('You can delete your dataset at any time — before or after release — using your email + access key + passphrase. Save your access key immediately after upload: it is shown only once and is not recoverable.')
+      ),
+      hr(),
+      h5(icon('shield-alt'), ' Privacy notes'),
+      tags$ul(
+        tags$li('Your passphrase is stored as a SHA-256 hash only — we never see the plain text.'),
+        tags$li('Your email is stored in lowercase and is only visible to the database administrator.'),
+        tags$li('The access key is a 32-character random token. Write it down or copy it immediately.'),
+        tags$li('Embargoed datasets are completely hidden from all search results, analysis tabs, and downloads.')
+      )
+    ))
+  })
+
   observeEvent(input$show_demo_raw, {
     df <- tryCatch(
       read.csv(.demo_raw_path, check.names = FALSE, stringsAsFactors = FALSE),
@@ -2313,15 +2381,20 @@ server <- function(input, output, session) {
     tryCatch({
       qres_init_schema(con)
 
-      # Duplicate check
+      # Duplicate check — allow re-upload only if needs_correction flag is set
       existing <- DBI::dbGetQuery(con, 'SELECT 1 FROM dataset WHERE dataset_id=?',
                                   params = list(dataset_id))
       if (nrow(existing) > 0) {
-        output$upload_progress_ui <- renderUI(NULL)
-        output$upload_status <- renderText(paste0(
-          'Dataset ID "', dataset_id, '" already exists in the database.\n',
-          'Choose a different ID, or delete the existing dataset from the "Manage my data" tab.'))
-        return()
+        correction_flag <- DBI::dbGetQuery(con,
+          'SELECT needs_correction FROM upload_embargo WHERE dataset_id = ?',
+          params = list(dataset_id))
+        if (nrow(correction_flag) == 0 || !isTRUE(correction_flag$needs_correction[1])) {
+          output$upload_progress_ui <- renderUI(NULL)
+          output$upload_status <- renderText(paste0(
+            'Dataset ID "', dataset_id, '" already exists in the database.\n',
+            'Choose a different ID, or use "Request a correction" in the "Manage my data" tab to reopen it.'))
+          return()
+        }
       }
 
       # Build metadata row and import
@@ -2365,20 +2438,38 @@ server <- function(input, output, session) {
       }
 
       # Register embargo record
-      key_info <- qres_register_embargo(
-        con, dataset_id, email, passphrase,
-        release_mode = release_mode,
-        release_date = if (release_mode == 'date') release_date else NA,
-        biorxiv_url  = if (release_mode == 'biorxiv') biorxiv_url else NA,
-        orcid        = trimws(input$upload_orcid %||% '')
-      )
+      is_correction <- {
+        cf <- DBI::dbGetQuery(con,
+          'SELECT needs_correction, access_key FROM upload_embargo WHERE dataset_id = ?',
+          params = list(dataset_id))
+        nrow(cf) > 0 && isTRUE(cf$needs_correction[1])
+      }
 
-      # Show access key prominently (only once)
-      last_access_key(list(
-        access_key = key_info$access_key,
-        dataset_id = dataset_id,
-        email      = email
-      ))
+      if (is_correction) {
+        # Embargo record already exists — clear the correction flag, keep credentials
+        DBI::dbExecute(con,
+          "UPDATE upload_embargo SET needs_correction = FALSE WHERE dataset_id = ?",
+          params = list(dataset_id))
+        existing_key <- DBI::dbGetQuery(con,
+          'SELECT access_key FROM upload_embargo WHERE dataset_id = ?',
+          params = list(dataset_id))$access_key[1]
+        last_access_key(NULL)   # key was already shown at original upload
+        correction_note <- '\n(Correction re-upload — original access key and embargo settings preserved.)'
+      } else {
+        key_info <- qres_register_embargo(
+          con, dataset_id, email, passphrase,
+          release_mode = release_mode,
+          release_date = if (release_mode == 'date') release_date else NA,
+          biorxiv_url  = if (release_mode == 'biorxiv') biorxiv_url else NA,
+          orcid        = trimws(input$upload_orcid %||% '')
+        )
+        last_access_key(list(
+          access_key = key_info$access_key,
+          dataset_id = dataset_id,
+          email      = email
+        ))
+        correction_note <- ''
+      }
 
       # Optional auto-analysis with model_free
       analysis_note <- ''
@@ -2405,8 +2496,8 @@ server <- function(input, output, session) {
         'Release mode: ', release_mode,
         if (release_mode == 'date')    paste0(' (', release_date, ')') else '',
         if (release_mode == 'biorxiv') paste0(' (', substr(biorxiv_url, 1, 50), ')') else '',
-        analysis_note, warn_msg, '\n\n',
-        '⚠ Copy the access key shown above before leaving this page!'
+        analysis_note, warn_msg, correction_note, '\n\n',
+        if (!is_correction) '⚠ Copy the access key shown above before leaving this page!' else ''
       ))
 
       # Auto-refresh search results
@@ -2423,20 +2514,72 @@ server <- function(input, output, session) {
   })
 
   # ── Shared helper: refresh the "my datasets" table for a given email ────────
+  .release_dot <- function(mode, needs_correction = FALSE) {
+    col <- ifelse(needs_correction,    'goldenrod',
+           ifelse(mode == 'immediate', 'darkolivegreen',
+           ifelse(mode == 'biorxiv',   'salmon',
+           ifelse(mode == 'date',      'firebrick', '#aaaaaa'))))
+    sprintf('<span style="color:%s; font-size:15px; line-height:1;">&#9679;</span>', col)
+  }
+
   .refresh_my_datasets <- function(email) {
     if (!nzchar(trimws(email %||% ''))) return()
     tryCatch({
       my_ds <- qres_my_datasets(con, email)
       keep  <- intersect(c('dataset_id', 'species', 'medium_type', 'temperature_c',
-                            'release_mode', 'release_date', 'released', 'created_at'),
+                            'release_mode', 'release_date', 'released', 'needs_correction',
+                            'created_at'),
                          names(my_ds))
+      tbl <- my_ds[, keep, drop = FALSE]
+      nc  <- if ('needs_correction' %in% names(tbl)) isTRUE(tbl$needs_correction) else FALSE
+      tbl <- cbind(` ` = .release_dot(tbl$release_mode, nc), tbl)
       output$my_datasets_table <- renderDT({
-        datatable(my_ds[, keep, drop = FALSE],
-                  options = list(pageLength = 10, scrollX = TRUE),
+        datatable(tbl,
+                  escape   = FALSE,
+                  options  = list(pageLength = 10, scrollX = TRUE,
+                                  columnDefs = list(list(width = '20px', targets = 0))),
                   rownames = FALSE)
       })
     }, error = function(e) NULL)
   }
+
+  # ── Request a correction (reopen upload) ────────────────────────────────────
+  observeEvent(input$run_reopen, {
+    dataset_id <- trimws(input$reopen_dataset_id  %||% '')
+    email      <- trimws(input$reopen_email       %||% '')
+    access_key <- trimws(input$reopen_access_key  %||% '')
+    passphrase <- input$reopen_passphrase %||% ''
+
+    errs <- character(0)
+    if (!nzchar(dataset_id)) errs <- c(errs, 'Dataset ID is required.')
+    if (!nzchar(email))      errs <- c(errs, 'Email is required.')
+    if (nchar(access_key) != 32) errs <- c(errs, 'Access key must be exactly 32 characters.')
+    if (nchar(passphrase) < 8)   errs <- c(errs, 'Passphrase must be at least 8 characters.')
+
+    if (length(errs) > 0) {
+      output$reopen_status <- renderText(paste('✗', errs, collapse = '\n'))
+      return()
+    }
+
+    result <- tryCatch(
+      qres_reopen_dataset(con, dataset_id, email, access_key, passphrase),
+      error = function(e) list(ok = FALSE, message = conditionMessage(e))
+    )
+    output$reopen_status <- renderText(
+      if (result$ok) paste('✓', result$message)
+      else           paste('✗', result$message)
+    )
+    if (isTRUE(result$ok)) {
+      updateTextInput(session, 'status_email', value = email)
+      .refresh_my_datasets(email)
+      showNotification(
+        tagList(icon('wrench'),
+                ' Upload cleared — go to "Upload raw data" to re-submit.'),
+        type     = 'message',
+        duration = 8
+      )
+    }
+  })
 
   # ── Status check (my datasets) ──────────────────────────────────────────────
   observeEvent(input$run_status_check, {
