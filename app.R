@@ -254,7 +254,14 @@ ui_metadata <- fluidPage(
                    class = 'btn-primary', width = '100%'),
       br(), br(),
       downloadButton('downloadTemplate', 'Download plate template CSV',
-                     class = 'btn-success')
+                     class = 'btn-success'),
+      tags$hr(style = 'margin:10px 0;'),
+      actionButton('update_meta', 'Update', width = '100%', class = 'btn-default'),
+      br(), br(),
+      actionButton('clear_meta',  'Clear',  width = '100%', class = 'btn-default'),
+      br(), br(),
+      actionButton('toggle_optional', 'Optional fields', width = '100%', class = 'btn-default'),
+      uiOutput('optional_fields_ui')
     ),
 
     mainPanel(width = 9,
@@ -268,60 +275,90 @@ ui_metadata <- fluidPage(
 
         tabPanel('Field reference',
           br(),
-          fluidRow(
-            column(6,
-              wellPanel(
-                tags$h5(tags$span(class='required-star','★'), ' Required fields (6)'),
-                tags$table(class='table table-condensed table-bordered',
-                  tags$thead(tags$tr(tags$th('Column'), tags$th('Description'), tags$th('Example'))),
-                  tags$tbody(
-                    tags$tr(tags$td(tags$code('dataset_id')), tags$td('Unique key — set in Submit page'), tags$td('ecoli_LB_37C_2023')),
-                    tags$tr(tags$td(tags$code('raw_file')),   tags$td('Raw CSV filename (time + OD)'), tags$td('plate01_run3.csv')),
-                    tags$tr(tags$td(tags$code('species')),    tags$td('Organism name'), tags$td('Escherichia coli')),
-                    tags$tr(tags$td(tags$code('medium_type')),tags$td('Growth medium'), tags$td('MOPS + 3g/L glucose')),
-                    tags$tr(tags$td(tags$code('temperature_c')), tags$td('Measurement temperature °C'), tags$td('37')),
-                    tags$tr(tags$td(tags$code('perturbation_type')), tags$td('chemical | genetic | temperature | none'), tags$td('chemical'))
-                  )
-                )
-              )
-            ),
-            column(6,
-              wellPanel(
-                tags$h5(tags$span(class='optional-label', 'Optional fields (16)')),
-                tags$table(class='table table-condensed',
-                  tags$thead(tags$tr(tags$th('Column'), tags$th('Example'))),
-                  tags$tbody(
-                    tags$tr(tags$td(tags$code('perturbation')),       tags$td('rifampicin / 37 / ΔtrpB')),
-                    tags$tr(tags$td(tags$code('strain')),             tags$td('K12 NCM3722')),
-                    tags$tr(tags$td(tags$code('taxon_id')),           tags$td('562')),
-                    tags$tr(tags$td(tags$code('medium_state')),       tags$td('liquid')),
-                    tags$tr(tags$td(tags$code('concentration')),      tags$td('50')),
-                    tags$tr(tags$td(tags$code('concentration_unit')), tags$td('mg/L')),
-                    tags$tr(tags$td(tags$code('plate_format')),       tags$td('96')),
-                    tags$tr(tags$td(tags$code('plate_reader')),       tags$td('Biotek Synergy H1')),
-                    tags$tr(tags$td(tags$code('wavelength_nm')),      tags$td('600')),
-                    tags$tr(tags$td(tags$code('shake_freq_rpm')),     tags$td('150')),
-                    tags$tr(tags$td(tags$code('spectrophotometer')),  tags$td('OD600')),
-                    tags$tr(tags$td(tags$code('time_unit')),          tags$td('h')),
-                    tags$tr(tags$td(tags$code('authors')),            tags$td('Smith, J.; Doe, A.')),
-                    tags$tr(tags$td(tags$code('year')),               tags$td('2024')),
-                    tags$tr(tags$td(tags$code('doi')),                tags$td('10.1234/...')),
-                    tags$tr(tags$td(tags$code('notes')),              tags$td('free text'))
-                  )
-                )
+          tags$div(class = 'alert alert-info', style = 'font-size:13px; padding:10px 14px;',
+            icon('circle-info'), ' ',
+            'These are the columns in the ', tags$strong('plate template CSV'), ' you download from this page.',
+            tags$br(),
+            tags$span(style = 'color:#31708f;',
+              'Dataset-level fields — species, medium, temperature, plate reader, authors, DOI — ',
+              'are entered separately on the ', tags$strong('Submit'), ' page.'
+            )
+          ),
+          wellPanel(
+            tags$h5('Plate template columns'),
+            tags$table(class = 'table table-condensed table-bordered',
+              style = 'font-size:13px;',
+              tags$thead(
+                tags$tr(tags$th('Column'), tags$th('Set by'), tags$th('Description'), tags$th('Example'))
+              ),
+              tags$tbody(
+                tags$tr(
+                  tags$td(tags$code('well')),
+                  tags$td('auto'),
+                  tags$td('Well identifier'),
+                  tags$td('A1, B12, H12')),
+                tags$tr(
+                  tags$td(tags$code('perturbation_type')),
+                  tags$td('form'),
+                  tags$td(tags$code('chemical'), ' | ', tags$code('genetic'), ' | ',
+                          tags$code('temperature'), ' | ', tags$code('none')),
+                  tags$td('chemical')),
+                tags$tr(
+                  tags$td(tags$code('perturbation')),
+                  tags$td('form'),
+                  tags$td('Drug name, mutation, or temperature value per well'),
+                  tags$td('rifampicin / ΔtrpB / 37')),
+                tags$tr(
+                  tags$td(tags$code('concentration')),
+                  tags$td('form'),
+                  tags$td('Numeric concentration (chemical only); 0 = control well'),
+                  tags$td('128, 64, 32…')),
+                tags$tr(
+                  tags$td(tags$code('concentration_unit')),
+                  tags$td('form'),
+                  tags$td('Unit for concentration'),
+                  tags$td('µg/mL, mg/L, mM')),
+                tags$tr(
+                  tags$td(tags$code('is_blank')),
+                  tags$td('Blank wells'),
+                  tags$td('Medium only — no bacteria'),
+                  tags$td('TRUE / FALSE')),
+                tags$tr(
+                  tags$td(tags$code('is_control')),
+                  tags$td('Control wells'),
+                  tags$td('No perturbation applied'),
+                  tags$td('TRUE / FALSE')),
+                tags$tr(
+                  tags$td(tags$span(class='optional-label', 'medium_state')),
+                  tags$td('Optional fields'),
+                  tags$td('Physical state of medium (default: liquid)'),
+                  tags$td('liquid, solid, semi-solid')),
+                tags$tr(
+                  tags$td(tags$span(class='optional-label', 'taxon_id')),
+                  tags$td('Optional fields'),
+                  tags$td('NCBI Taxonomy numeric ID'),
+                  tags$td('562')),
+                tags$tr(
+                  tags$td(tags$span(class='optional-label', 'replicate')),
+                  tags$td('Optional fields'),
+                  tags$td('Biological replicate index for this plate'),
+                  tags$td('1, 2, 3'))
               )
             )
           ),
           wellPanel(
             tags$h5('Workflow'),
             tags$ol(
-              tags$li(tags$strong('Metadata Preparation page:'), ' fill the form → Apply & preview → download the plate template CSV (per-well breakdown).'),
-              tags$li(tags$strong('Submit page → Upload raw data:'), ' provide dataset_id ★, upload the raw CSV (time + OD) and the plate template CSV together.'),
-              tags$li('The app links them via dataset_id → stores everything in DuckDB as Parquet.'),
-              tags$li('Search, analyse, and download from the Search and Analyse pages.')
+              tags$li(tags$strong('Here (Metadata Preparation):'),
+                      ' describe the plate layout → Apply & preview → download plate template CSV.'),
+              tags$li(tags$strong('Submit page:'),
+                      ' upload your raw OD CSV + the plate template CSV, and fill in species, medium, temperature, DOI, etc.'),
+              tags$li('The app links both files via ', tags$code('dataset_id'),
+                      ' and stores everything in the database.')
             ),
-            tags$p(tags$strong('Raw data CSV format:'), ' column 1 = time (in time_unit, default hours);',
-                   ' columns 2–N = OD values, header = well names (A1, A2, …, H12).')
+            tags$p(tags$strong('Raw OD CSV format:'),
+                   ' column 1 named ', tags$code('Time'), ' (values in hours);',
+                   ' columns 2–N are OD values with well names as headers (A1, A2, … H12).')
           )
         )
       )
@@ -1640,30 +1677,32 @@ server <- function(input, output, session) {
 
   .replace_num <- function(txt, val) sub('[0-9]+(?:\\.[0-9]*)?', val, txt, perl = TRUE)
 
-  plateMatrix <- reactiveVal(data.frame())
+  plateMatrix      <- reactiveVal(data.frame())
+  show_optional_meta <- reactiveVal(FALSE)
 
-  observeEvent(input$plateSize, {
-    nc <- .plate_cols(input$plateSize); nr <- .plate_rows(input$plateSize)
+  # Shared helper: builds a fresh well list for the current plate size
+  .blank_plate <- function(size) {
+    nc <- .plate_cols(size); nr <- .plate_rows(size)
     row_letters <- if (nr <= 26) LETTERS[seq_len(nr)] else
       c(LETTERS, paste0('A', LETTERS))[seq_len(nr)]
     wells <- as.vector(t(outer(row_letters, seq_len(nc), paste0)))
-    plateMatrix(data.frame(
+    data.frame(
       well               = wells,
       perturbation_type  = NA_character_,
       perturbation       = NA_character_,
       concentration      = NA_real_,
       concentration_unit = NA_character_,
+      taxon_id           = NA_character_,
       medium_state       = 'liquid',
       is_blank           = FALSE,
       is_control         = FALSE,
       replicate          = 1L,
-      stringsAsFactors   = FALSE))
-  })
+      stringsAsFactors   = FALSE)
+  }
 
-  observeEvent(input$applyMetadata, {
-    plate <- plateMatrix()
+  # Shared helper: apply form inputs onto a plate data.frame
+  .apply_meta_inputs <- function(plate, input) {
     nc <- .plate_cols(input$plateSize); nr <- .plate_rows(input$plateSize)
-
     ptype <- input$meta_perturb_type
     plate$perturbation_type <- ptype
 
@@ -1684,9 +1723,16 @@ server <- function(input, output, session) {
     } else if (ptype == 'temperature') {
       start_t <- .extract_num(input$meta_temp_start)
       step_t  <- if (nzchar(input$meta_temp_step)) .extract_num(input$meta_temp_step) else 0
-      temps   <- start_t + step_t * (seq_len(nc) - 1)
-      plate$perturbation <- rep(temps, times = nr)
+      plate$perturbation <- rep(start_t + step_t * (seq_len(nc) - 1), times = nr)
     }
+
+    # Optional fields (only if panel is open and inputs exist)
+    if (!is.null(input$meta_medium_state))
+      plate$medium_state <- input$meta_medium_state
+    if (!is.null(input$meta_replicate))
+      plate$replicate <- suppressWarnings(as.integer(input$meta_replicate))
+    if (!is.null(input$meta_taxon_id) && nzchar(trimws(input$meta_taxon_id)))
+      plate$taxon_id <- trimws(input$meta_taxon_id)
 
     # Control wells
     ctrls <- .parse_wells(input$meta_control_wells)
@@ -1702,7 +1748,46 @@ server <- function(input, output, session) {
     if (length(blanks) > 0)
       plate$is_blank[toupper(plate$well) %in% blanks] <- TRUE
 
-    plateMatrix(plate)
+    plate
+  }
+
+  observeEvent(input$plateSize, {
+    plateMatrix(.blank_plate(input$plateSize))
+  })
+
+  observeEvent(input$applyMetadata, {
+    plateMatrix(.apply_meta_inputs(.blank_plate(input$plateSize), input))
+  })
+
+  observeEvent(input$update_meta, {
+    plateMatrix(.apply_meta_inputs(plateMatrix(), input))
+  })
+
+  observeEvent(input$clear_meta, {
+    plateMatrix(.blank_plate(input$plateSize))
+  })
+
+  observeEvent(input$toggle_optional, {
+    show_optional_meta(!show_optional_meta())
+  })
+
+  output$optional_fields_ui <- renderUI({
+    if (!show_optional_meta()) return(NULL)
+    tagList(
+      br(),
+      selectInput('meta_medium_state',
+        opt_label('Medium state',
+          'Physical state of the growth medium. Liquid is the default for plate reader experiments.'),
+        choices = c('liquid', 'solid', 'semi-solid'), selected = 'liquid'),
+      numericInput('meta_replicate',
+        opt_label('Replicate number',
+          'Biological replicate index for this plate (1, 2, 3…). All wells get the same number.'),
+        value = 1, min = 1, step = 1),
+      textInput('meta_taxon_id',
+        opt_label('NCBI Taxon ID',
+          'Numeric identifier from NCBI Taxonomy. Example: 562 for Escherichia coli, 4932 for S. cerevisiae.'),
+        placeholder = '562')
+    )
   })
 
   output$plateMatrix <- renderDT({
