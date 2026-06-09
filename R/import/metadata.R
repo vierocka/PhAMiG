@@ -109,6 +109,8 @@ qres_import_metadata <- function(con, metadata_csv = 'data/metaData.csv') {
 
 # Import a per-well plate template CSV (from Metadata Preparation page).
 # Links to an existing dataset_id. Replaces the summary well row.
+# Missing columns (species, medium_type, etc.) fall back to the dataset-level
+# summary row that was written during qres_import_metadata().
 qres_import_plate_template <- function(con, template_csv, dataset_id) {
   requireNamespace('readr'); requireNamespace('DBI')
 
@@ -117,27 +119,43 @@ qres_import_plate_template <- function(con, template_csv, dataset_id) {
 
   plate_id <- paste0(dataset_id, '__plate_1')
 
+  # Read dataset-level defaults from the existing summary row BEFORE removing it
+  summary <- tryCatch(
+    DBI::dbGetQuery(con,
+      'SELECT species, strain, taxon_id, medium_type, medium_state, perturbation_type, perturbation
+       FROM well_metadata WHERE plate_id = ? AND well = ?',
+      params = list(plate_id, 'summary')),
+    error = function(e) data.frame()
+  )
+  def <- function(col, fallback = NA_character_)
+    if (nrow(summary) > 0 && col %in% names(summary)) summary[[col]][1] else fallback
+
   # Remove old summary row for this plate
   DBI::dbExecute(con, 'DELETE FROM well_metadata WHERE plate_id = ? AND well = ?',
                  params = list(plate_id, 'summary'))
 
-  # Build well_metadata rows
-  rows <- dplyr::transmute(tmpl,
-    well_id   = paste0(plate_id, '__', tolower(well)),
-    plate_id  = plate_id,
-    well,
-    species            = dplyr::coalesce(species,            NA_character_),
-    taxon_id           = dplyr::coalesce(taxon_id,           NA_character_),
-    strain             = dplyr::coalesce(strain,             NA_character_),
-    medium_state       = dplyr::coalesce(medium_state,       NA_character_),
-    medium_type        = dplyr::coalesce(medium_type,        NA_character_),
-    perturbation_type  = dplyr::coalesce(perturbation_type,  'none'),
-    perturbation       = dplyr::coalesce(perturbation,       NA_character_),
-    concentration      = suppressWarnings(as.numeric(dplyr::coalesce(concentration, NA_character_))),
-    concentration_unit = dplyr::coalesce(concentration_unit, NA_character_),
-    is_blank           = as.logical(dplyr::coalesce(is_blank,  'FALSE')),
-    is_control         = as.logical(dplyr::coalesce(is_control,'FALSE')),
-    replicate          = suppressWarnings(as.integer(dplyr::coalesce(replicate, '1')))
+  # Helper: get column vector from tmpl or return a per-row default
+  .col <- function(col, default) {
+    if (col %in% names(tmpl)) tmpl[[col]] else rep(default, nrow(tmpl))
+  }
+
+  rows <- data.frame(
+    well_id            = paste0(plate_id, '__', tolower(tmpl$well)),
+    plate_id           = plate_id,
+    well               = tmpl$well,
+    species            = dplyr::coalesce(.col('species',           NA_character_), def('species')),
+    taxon_id           = dplyr::coalesce(.col('taxon_id',          NA_character_), def('taxon_id')),
+    strain             = dplyr::coalesce(.col('strain',            NA_character_), def('strain')),
+    medium_state       = dplyr::coalesce(.col('medium_state',      NA_character_), def('medium_state', 'liquid')),
+    medium_type        = dplyr::coalesce(.col('medium_type',       NA_character_), def('medium_type')),
+    perturbation_type  = dplyr::coalesce(.col('perturbation_type', NA_character_), def('perturbation_type', 'none')),
+    perturbation       = dplyr::coalesce(.col('perturbation',      NA_character_), def('perturbation')),
+    concentration      = suppressWarnings(as.numeric(.col('concentration', NA_real_))),
+    concentration_unit = .col('concentration_unit', NA_character_),
+    is_blank           = as.logical(.col('is_blank',   FALSE)),
+    is_control         = as.logical(.col('is_control', FALSE)),
+    replicate          = suppressWarnings(as.integer(.col('replicate', 1L))),
+    stringsAsFactors   = FALSE
   )
 
   DBI::dbWriteTable(con, 'well_metadata', rows, append = TRUE)

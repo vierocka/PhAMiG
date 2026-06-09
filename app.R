@@ -176,14 +176,16 @@ ui_metadata <- fluidPage(
     column(4, img(src = 'Qres_DB_logo.png', height = '80px')),
     column(8,
       h3('Metadata Template Preparation'),
-      tags$div(class = 'key-box',
-        tags$strong('How metadata links to raw data:'), tags$br(),
-        tags$code('dataset_id'), ' (unique key) → ',
-        tags$code('raw_file'), ' (CSV with time + OD columns)', tags$br(),
-        'Both must be provided when submitting data. The plate template below is the ',
-        tags$em('per-well'), ' breakdown of conditions within one raw CSV.',
+      tags$div(class = 'alert alert-info', style = 'margin-bottom:0; font-size:13px; padding:10px 14px;',
+        icon('circle-info'), tags$strong(' What this page does:'), ' ',
+        'Describe the ', tags$strong('per-well layout'), ' of your plate — which wells carry which concentration, which are blanks, and which are controls.',
         tags$br(),
-        tags$span(class = 'required-star', '★'), ' = required field'
+        tags$span(style = 'color:#31708f;',
+          'Species, medium, temperature, and publication details are entered once on the ',
+          tags$strong('Submit'), ' page — not here.'
+        ),
+        tags$br(),
+        tags$small(tags$span(class = 'required-star', '★'), ' = required')
       )
     )
   ),
@@ -191,23 +193,11 @@ ui_metadata <- fluidPage(
   sidebarLayout(
     sidebarPanel(width = 3,
 
-      # ── REQUIRED block ───────────────────────────────────────────────────
-      tags$p(class = 'required-label',
-        tags$span(class = 'required-star', '★ '), 'Required fields'),
-
       selectInput('plateSize', tags$span(class='required-label', 'Plate format ★'),
                   choices = c('96-well (8×12)' = '8x12',
                               '384-well (16×24)' = '16x24',
                               '48-well (6×8)'  = '6x8',
                               '24-well (4×6)'  = '4x6')),
-
-      textInput('meta_species',
-        tags$span(class='required-label', 'Species ★'),
-        placeholder = 'Escherichia coli'),
-
-      textInput('meta_medium',
-        tags$span(class='required-label', 'Medium type ★'),
-        placeholder = 'LB, MOPS + 3g/L glucose, M9 + glucose…'),
 
       tags$label(class='required-label', 'Perturbation type ★'),
       radioButtons('meta_perturb_type', label = NULL,
@@ -219,59 +209,45 @@ ui_metadata <- fluidPage(
 
       tags$hr(),
 
-      # ── Temperature (required under chemical/genetic/none) ────────────
       conditionalPanel("input.meta_perturb_type == 'chemical'",
-        textInput('meta_temp_chem',
-          tags$span(class='required-label', 'Temperature (°C) ★'), placeholder = '37'),
         textInput('meta_perturb',
-          tags$span(class='required-label', 'Perturbation name ★'), placeholder = 'rifampicin'),
-        textInput('meta_conc', 'Starting concentration', placeholder = '50 mg/L'),
+          tags$span(class='required-label', 'Perturbation name ★'),
+          placeholder = 'rifampicin'),
+        fluidRow(
+          column(7, textInput('meta_conc', 'Starting concentration', placeholder = '128')),
+          column(5, textInput('meta_conc_unit', 'Unit', placeholder = 'µg/mL'))
+        ),
         checkboxInput('meta_dilution', 'Serial dilution along columns'),
         conditionalPanel('input.meta_dilution == true',
           textInput('meta_ratio', 'Dilution ratio', placeholder = '1:2'))
       ),
+
       conditionalPanel("input.meta_perturb_type == 'genetic'",
-        textInput('meta_temp_gen',
-          tags$span(class='required-label', 'Temperature (°C) ★'), placeholder = '37'),
         textInput('meta_genetic_bg',
-          tags$span(class='required-label', 'Genetic background ★'),
+          tags$span(class='required-label', 'Mutation / genetic background ★'),
           placeholder = 'ΔtrpB  (comma-separate multiple)')
       ),
+
       conditionalPanel("input.meta_perturb_type == 'temperature'",
         textInput('meta_temp_start',
-          tags$span(class='required-label', 'Starting temperature (°C) ★'), placeholder = '30'),
+          tags$span(class='required-label', 'Starting temperature (°C) ★'),
+          placeholder = '30'),
         textInput('meta_temp_step',
-          'Step per column (°C)', placeholder = '1  (leave blank = same temp all wells)')
-      ),
-      conditionalPanel("input.meta_perturb_type == 'none'",
-        textInput('meta_temp_none',
-          tags$span(class='required-label', 'Temperature (°C) ★'), placeholder = '37')
+          'Step per column (°C)',
+          placeholder = '1  (leave blank = same temp all wells)')
       ),
 
       tags$hr(),
 
-      # ── OPTIONAL block ───────────────────────────────────────────────────
-      tags$p(class = 'optional-label', 'Optional fields'),
+      textInput('meta_control_wells',
+        opt_label('Control wells (no perturbation)',
+          'Wells that received no treatment (concentration set to 0). Comma-separated or range: A12:H12 = all 8 wells of column 12; A1:A12 = full row A across all 12 columns.'),
+        placeholder = 'e.g. A12:H12'),
 
-      checkboxInput('meta_use_strain', 'Specify strain'),
-      conditionalPanel('input.meta_use_strain == true',
-        textInput('meta_strain', tags$span(class='optional-label','Strain'),
-                  placeholder = 'MG1655')),
-
-      checkboxInput('meta_medium_mod', 'Medium modification'),
-      conditionalPanel('input.meta_medium_mod == true',
-        textInput('meta_medium_mod_val', tags$span(class='optional-label','Modification'),
-                  placeholder = '+ 50 g/L glucose'),
-        checkboxInput('meta_medium_dilution', 'Serial dilution along columns'),
-        conditionalPanel('input.meta_medium_dilution == true',
-          textInput('meta_medium_ratio', tags$span(class='optional-label','Dilution ratio'),
-                    placeholder = '1:2'))
-      ),
-
-      checkboxInput('meta_control_col', 'Last column = no-perturbation control'),
       textInput('meta_blank_wells',
-        tags$span(class='optional-label', 'Blank wells (comma-separated)'),
-        placeholder = 'A1, H12'),
+        opt_label('Blank wells',
+          'Wells containing medium only — no bacteria. Comma-separated or range: A12:E12 = A12, B12, C12, D12, E12 (same column, rows A to E); H1:H12 = full row H.'),
+        placeholder = 'e.g. A1, H12 or H1:H12'),
 
       tags$hr(),
       actionButton('applyMetadata', 'Apply & preview',
@@ -1672,75 +1648,59 @@ server <- function(input, output, session) {
       c(LETTERS, paste0('A', LETTERS))[seq_len(nr)]
     wells <- as.vector(t(outer(row_letters, seq_len(nc), paste0)))
     plateMatrix(data.frame(
-      Well=wells, Species=NA, Strain=NA, Medium=NA, Medium_Modification=NA,
-      Perturbation_Type=NA, Perturbation=NA, Concentration=NA, Temperature=NA,
-      Is_Blank=FALSE, stringsAsFactors=FALSE))
+      well               = wells,
+      perturbation_type  = NA_character_,
+      perturbation       = NA_character_,
+      concentration      = NA_real_,
+      concentration_unit = NA_character_,
+      medium_state       = 'liquid',
+      is_blank           = FALSE,
+      is_control         = FALSE,
+      replicate          = 1L,
+      stringsAsFactors   = FALSE))
   })
 
   observeEvent(input$applyMetadata, {
     plate <- plateMatrix()
     nc <- .plate_cols(input$plateSize); nr <- .plate_rows(input$plateSize)
-    plate$Species <- input$meta_species
-    plate$Medium  <- input$meta_medium
-    if (isTRUE(input$meta_use_strain)) plate$Strain <- input$meta_strain
 
-    # Medium modification / serial dilution
-    if (isTRUE(input$meta_medium_mod)) {
-      if (isTRUE(input$meta_medium_dilution) && nzchar(input$meta_medium_ratio)) {
-        ratio <- as.numeric(strsplit(input$meta_medium_ratio, ':')[[1]])
-        a <- ratio[1]; b <- ratio[2]
-        start <- .extract_num(input$meta_medium_mod_val)
-        for (j in seq_len(nr)) for (i in seq_len(nc)) {
-          plate[nc*(j-1)+i, 'Medium_Modification'] <-
-            .replace_num(input$meta_medium_mod_val, start * (a/b)^(i-1))
-        }
-      } else {
-        plate$Medium_Modification <- input$meta_medium_mod_val
-      }
-    }
-
-    # Perturbation
     ptype <- input$meta_perturb_type
+    plate$perturbation_type <- ptype
+
     if (ptype == 'chemical') {
-      plate$Perturbation_Type <- 'chemical'
-      plate$Perturbation      <- input$meta_perturb
-      plate$Temperature       <- as.numeric(input$meta_temp_chem)
+      plate$perturbation       <- input$meta_perturb
+      plate$concentration_unit <- trimws(input$meta_conc_unit %||% '')
       if (isTRUE(input$meta_dilution) && nzchar(input$meta_ratio)) {
         ratio <- as.numeric(strsplit(input$meta_ratio, ':')[[1]])
         a <- ratio[1]; b <- ratio[2]; start <- .extract_num(input$meta_conc)
         for (j in seq_len(nr)) for (i in seq_len(nc))
-          plate[nc*(j-1)+i, 'Concentration'] <-
-            .replace_num(input$meta_conc, start * (a/b)^(i-1))
+          plate[nc*(j-1)+i, 'concentration'] <- start * (a/b)^(i-1)
       } else {
-        plate$Concentration <- input$meta_conc
+        plate$concentration <- .extract_num(input$meta_conc)
       }
     } else if (ptype == 'genetic') {
-      plate$Perturbation_Type <- 'genetic'
-      plate$Temperature <- as.numeric(input$meta_temp_gen)
       muts <- trimws(strsplit(input$meta_genetic_bg, ',')[[1]])
-      if (length(muts) > 0) plate$Perturbation <- muts
+      if (length(muts) > 0) plate$perturbation <- muts
     } else if (ptype == 'temperature') {
-      plate$Perturbation_Type <- 'temperature'
       start_t <- .extract_num(input$meta_temp_start)
       step_t  <- if (nzchar(input$meta_temp_step)) .extract_num(input$meta_temp_step) else 0
-      temps <- start_t + step_t * (seq_len(nc) - 1)
-      plate$Temperature <- rep(temps, times = nr)
-    } else {
-      plate$Temperature <- as.numeric(input$meta_temp_none)
+      temps   <- start_t + step_t * (seq_len(nc) - 1)
+      plate$perturbation <- rep(temps, times = nr)
     }
 
-    # Control last column
-    if (isTRUE(input$meta_control_col)) {
-      last_col_idx <- seq(nc, nrow(plate), by = nc)
-      plate[last_col_idx, 'Concentration']  <- 0
-      plate[last_col_idx, 'Perturbation']   <- 'none'
+    # Control wells
+    ctrls <- .parse_wells(input$meta_control_wells)
+    if (length(ctrls) > 0) {
+      idx <- toupper(plate$well) %in% ctrls
+      plate$concentration[idx] <- 0
+      plate$perturbation[idx]  <- 'none'
+      plate$is_control[idx]    <- TRUE
     }
 
     # Blank wells
-    if (nzchar(input$meta_blank_wells)) {
-      blanks <- trimws(strsplit(input$meta_blank_wells, ',')[[1]])
-      plate$Is_Blank[plate$Well %in% blanks] <- TRUE
-    }
+    blanks <- .parse_wells(input$meta_blank_wells)
+    if (length(blanks) > 0)
+      plate$is_blank[toupper(plate$well) %in% blanks] <- TRUE
 
     plateMatrix(plate)
   })
@@ -1750,7 +1710,7 @@ server <- function(input, output, session) {
     if (nrow(plate) == 0) return(datatable(data.frame(message = 'Select plate format to start.')))
     non_empty <- vapply(plate, function(col)
       !all(is.na(col) | col == '' | isFALSE(col)), logical(1))
-    non_empty['Well'] <- TRUE
+    non_empty['well'] <- TRUE
     datatable(plate[, non_empty, drop = FALSE],
               options = list(pageLength = 96, dom = 't', scrollX = TRUE))
   })
