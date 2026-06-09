@@ -44,6 +44,7 @@ source('R/llm/rule_parser.R')
 
 source('R/embargo/access_key.R')
 source('R/embargo/release_check.R')
+source('R/utils/email.R')
 
 # ── Shared bottom navigation bar ─────────────────────────────────────────────
 bottom_nav <- tagList(
@@ -1047,30 +1048,35 @@ ui_submit <- fluidPage(
     tabPanel('Notes & observations',
       br(),
       fluidRow(
-        column(6,
+        column(12,
           wellPanel(
             h5('Submit a note, limitation, or bug observation'),
-            helpText('Stored in the local database and reviewed by the maintainer.'),
-            selectInput('note_dataset', 'Linked dataset (optional)',
-                        choices = c('general / not dataset-specific' = ''),
-                        width = '100%'),
-            selectInput('note_type', 'Type',
-                        choices = c('bug', 'limitation', 'observation',
-                                    'data_quality', 'feature_request'),
-                        width = '100%'),
-            textInput('note_author',
-              opt_label('Your name or email', 'Optional. Used only to follow up if needed.'),
-              width = '100%'),
+            helpText('Stored locally and logged to file. The maintainer is notified by email.'),
+            fluidRow(
+              column(4,
+                selectInput('note_type', 'Type',
+                            choices = c('bug', 'limitation', 'observation',
+                                        'data_quality', 'feature_request'),
+                            width = '100%')
+              ),
+              column(8,
+                textInput('note_author',
+                  opt_label('Your name or email', 'Optional. Used only to follow up if needed.'),
+                  width = '100%')
+              )
+            ),
+            textInput('note_dataset_id',
+              opt_label('Dataset ID', 'If the note relates to a specific dataset, enter its ID here.'),
+              width = '100%', placeholder = 'ecoli_MOPS_37C_2026_smith  (optional)'),
             textAreaInput('note_text', 'Description', rows = 5, width = '100%',
                           placeholder = 'Describe the issue, limitation, or observation…'),
             actionButton('submit_note', 'Submit note', class = 'btn-warning', width = '100%')
           )
-        ),
-        column(6,
-          h5('Submitted notes'),
-          DTOutput('notes_table')
         )
-      )
+      ),
+      br(),
+      h5('Submitted notes'),
+      DTOutput('notes_table')
     )
   ),
   bottom_nav
@@ -2690,16 +2696,43 @@ server <- function(input, output, session) {
 
   observeEvent(input$submit_note, {
     req(nzchar(trimws(input$note_text %||% '')))
+    note_id   <- paste0('note_', format(Sys.time(), '%Y%m%d%H%M%S'),
+                        '_', sample(1000:9999, 1))
+    note_type <- input$note_type
+    note_text <- trimws(input$note_text)
+    author    <- trimws(input$note_author %||% '')
+    ts        <- format(Sys.time(), '%Y-%m-%d %H:%M:%S')
+
+    # Store in DuckDB
+    ds_id <- trimws(input$note_dataset_id %||% '')
     note <- data.frame(
-      note_id    = paste0('note_', format(Sys.time(), '%Y%m%d%H%M%S'),
-                          '_', sample(1000:9999, 1)),
-      dataset_id = if (nzchar(input$note_dataset %||% '')) input$note_dataset else NA_character_,
-      note_type  = input$note_type,
-      note_text  = trimws(input$note_text),
-      author     = trimws(input$note_author %||% ''),
+      note_id    = note_id,
+      dataset_id = if (nzchar(ds_id)) ds_id else NA_character_,
+      note_type  = note_type,
+      note_text  = note_text,
+      author     = author,
       stringsAsFactors = FALSE
     )
     DBI::dbWriteTable(con, 'user_note', note, append = TRUE)
+
+    # Write to Submittion_logs folder
+    log_dir  <- 'Submittion_logs'
+    dir.create(log_dir, showWarnings = FALSE, recursive = TRUE)
+    log_file <- file.path(log_dir, paste0(note_id, '.txt'))
+    writeLines(c(
+      paste('ID:        ', note_id),
+      paste('Type:      ', note_type),
+      paste('Author:    ', if (nzchar(author)) author else '(anonymous)'),
+      paste('Timestamp: ', ts),
+      '',
+      '--- Note text ---',
+      note_text
+    ), log_file)
+
+    # Email notification (silent if not configured)
+    phamig_notify_note(note_id, note_type, note_text,
+                       author = author, timestamp = ts)
+
     updateTextAreaInput(session, 'note_text', value = '')
     showNotification('Note submitted — thank you!', type = 'message')
   })
@@ -2710,7 +2743,7 @@ server <- function(input, output, session) {
     if (!DBI::dbExistsTable(con, 'user_note')) return(datatable(data.frame()))
     datatable(
       DBI::dbGetQuery(con,
-        'SELECT note_type, note_text, author, dataset_id, created_at FROM user_note ORDER BY created_at DESC'),
+        'SELECT note_type, note_text, created_at FROM user_note ORDER BY created_at DESC'),
       options = list(pageLength = 10, scrollX = TRUE)
     )
   })
