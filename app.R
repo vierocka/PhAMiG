@@ -326,7 +326,7 @@ ui_metadata <- fluidPage(
     ),
 
     mainPanel(width = 9,
-      tabsetPanel(
+      tabsetPanel(id = 'meta_tabs',
         tabPanel('Plate preview',
           br(),
           DTOutput('plateMatrix'),
@@ -1738,8 +1738,9 @@ server <- function(input, output, session) {
 
   .replace_num <- function(txt, val) sub('[0-9]+(?:\\.[0-9]*)?', val, txt, perl = TRUE)
 
-  plateMatrix      <- reactiveVal(data.frame())
+  plateMatrix        <- reactiveVal(data.frame())
   show_optional_meta <- reactiveVal(FALSE)
+  well_edit_open     <- reactiveVal(NULL)   # well name currently in detail tab
 
   # Shared helper: builds a fresh well list for the current plate size
   .blank_plate <- function(size) {
@@ -1766,6 +1767,15 @@ server <- function(input, output, session) {
     nc <- .plate_cols(input$plateSize); nr <- .plate_rows(input$plateSize)
     ptype <- input$meta_perturb_type
     plate$perturbation_type <- ptype
+
+    # Mark blank / control wells first so eligibility logic below can skip them
+    blanks_pre <- .parse_wells(input$meta_blank_wells)
+    if (length(blanks_pre) > 0)
+      plate$is_blank[toupper(plate$well) %in% blanks_pre] <- TRUE
+
+    ctrls_pre <- .parse_wells(input$meta_control_wells)
+    if (length(ctrls_pre) > 0)
+      plate$is_control[toupper(plate$well) %in% ctrls_pre] <- TRUE
 
     if (ptype == 'chemical') {
       plate$perturbation       <- input$meta_perturb
@@ -1823,6 +1833,12 @@ server <- function(input, output, session) {
       } else if (nzchar(trimws(input$meta_cg_inoc_conc %||% ''))) {
         inoc_v[] <- as.character(.extract_num(input$meta_cg_inoc_conc))
       }
+
+      # Blank wells → "0;0", control wells → keep chem conc, zero inoculum
+      blank_cg <- which(plate$is_blank)
+      if (length(blank_cg) > 0) { chem_v[blank_cg] <- '0'; inoc_v[blank_cg] <- '0' }
+      ctrl_cg <- which(plate$is_control)
+      if (length(ctrl_cg) > 0) inoc_v[ctrl_cg] <- '0'
 
       # Combine: "chem;inoc" in concentration column
       plate$concentration      <- paste0(ifelse(is.na(chem_v), '', chem_v),
@@ -1882,19 +1898,20 @@ server <- function(input, output, session) {
     if (!is.null(input$meta_taxon_id) && nzchar(trimws(input$meta_taxon_id)))
       plate$taxon_id <- trimws(input$meta_taxon_id)
 
-    # Control wells
-    ctrls <- .parse_wells(input$meta_control_wells)
-    if (length(ctrls) > 0) {
-      idx <- toupper(plate$well) %in% ctrls
-      plate$concentration[idx] <- 0
-      plate$perturbation[idx]  <- 'none'
-      plate$is_control[idx]    <- TRUE
+    # Final overrides — applied after type-specific logic
+    # Use the pre-parsed well lists (not is_blank/is_control) so that temperature-matched
+    # control wells (is_control=TRUE but with a real temperature value) are not overwritten.
+    if (ptype != 'chemical_genetic') {
+      if (length(blanks_pre) > 0) {
+        bi <- toupper(plate$well) %in% blanks_pre
+        plate$concentration[bi] <- 0
+      }
+      if (length(ctrls_pre) > 0) {
+        ci <- toupper(plate$well) %in% ctrls_pre
+        plate$concentration[ci] <- 0
+        plate$perturbation[ci]  <- 'none'
+      }
     }
-
-    # Blank wells
-    blanks <- .parse_wells(input$meta_blank_wells)
-    if (length(blanks) > 0)
-      plate$is_blank[toupper(plate$well) %in% blanks] <- TRUE
 
     plate
   }
@@ -1917,6 +1934,91 @@ server <- function(input, output, session) {
 
   observeEvent(input$toggle_optional, {
     show_optional_meta(!show_optional_meta())
+  })
+
+  # ── Well detail tab (double-click on plate row) ────────────────────────────
+  observeEvent(input$plate_row_dblclick, {
+    idx   <- input$plate_row_dblclick$row
+    plate <- plateMatrix()
+    if (is.null(idx) || idx < 1 || idx > nrow(plate)) return()
+    row       <- plate[idx, ]
+    well_name <- row$well
+    well_edit_open(well_name)
+
+    conc_str <- if (is.na(row$concentration)) '' else as.character(row$concentration)
+
+    tab_ui <- tagList(
+      br(),
+      tags$h5(tags$strong(well_name), ' — manual override'),
+      helpText('Values entered here replace what Apply / Update set for this specific well.'),
+      tags$hr(style = 'margin:6px 0 12px;'),
+      fluidRow(
+        column(6,
+          selectInput('wd_perturb_type', 'Perturbation type',
+            choices  = c('chemical', 'genetic', 'chemical_genetic', 'temperature', 'none'),
+            selected = row$perturbation_type %||% 'none'),
+          textInput('wd_perturbation', 'Perturbation / name',
+            value = as.character(row$perturbation %||% '')),
+          textInput('wd_concentration', 'Concentration',
+            placeholder = 'numeric or chem;inoc for combined', value = conc_str),
+          textInput('wd_conc_unit', 'Concentration unit',
+            value = as.character(row$concentration_unit %||% ''))
+        ),
+        column(6,
+          selectInput('wd_medium_state', 'Medium state',
+            choices  = c('liquid', 'solid', 'semi-solid'),
+            selected = row$medium_state %||% 'liquid'),
+          numericInput('wd_replicate', 'Replicate',
+            value = as.integer(row$replicate %||% 1L), min = 1L, step = 1L),
+          textInput('wd_taxon_id', 'Taxon ID',
+            value = as.character(row$taxon_id %||% '')),
+          br(),
+          checkboxInput('wd_is_blank',   'Blank well',   value = isTRUE(row$is_blank)),
+          checkboxInput('wd_is_control', 'Control well', value = isTRUE(row$is_control))
+        )
+      ),
+      tags$hr(style = 'margin:8px 0;'),
+      fluidRow(
+        column(2, actionButton('well_detail_ok',     'OK',     class = 'btn-primary')),
+        column(2, actionButton('well_detail_cancel', 'Cancel', class = 'btn-default'))
+      ),
+      br()
+    )
+
+    removeTab('meta_tabs', 'well_edit')
+    appendTab('meta_tabs',
+      tabPanel('Well detail', value = 'well_edit', tab_ui),
+      select = TRUE)
+  })
+
+  observeEvent(input$well_detail_ok, {
+    well_name <- well_edit_open()
+    if (is.null(well_name)) return()
+    plate <- plateMatrix()
+    idx   <- which(plate$well == well_name)
+    if (length(idx) == 0) return()
+
+    plate$perturbation_type[idx]  <- input$wd_perturb_type  %||% 'none'
+    plate$perturbation[idx]       <- trimws(input$wd_perturbation  %||% '')
+    # concentration: keep as character so semicolon values (chemical_genetic) survive
+    conc_raw <- trimws(input$wd_concentration %||% '')
+    plate$concentration <- as.character(plate$concentration)
+    plate$concentration[idx] <- if (nzchar(conc_raw)) conc_raw else NA_character_
+    plate$concentration_unit[idx] <- trimws(input$wd_conc_unit %||% '')
+    plate$medium_state[idx]  <- input$wd_medium_state %||% 'liquid'
+    plate$replicate[idx]     <- as.integer(input$wd_replicate %||% 1L)
+    plate$taxon_id[idx]      <- trimws(input$wd_taxon_id %||% '')
+    plate$is_blank[idx]      <- isTRUE(input$wd_is_blank)
+    plate$is_control[idx]    <- isTRUE(input$wd_is_control)
+
+    plateMatrix(plate)
+    removeTab('meta_tabs', 'well_edit')
+    well_edit_open(NULL)
+  })
+
+  observeEvent(input$well_detail_cancel, {
+    removeTab('meta_tabs', 'well_edit')
+    well_edit_open(NULL)
   })
 
   output$optional_fields_ui <- renderUI({
@@ -1945,7 +2047,16 @@ server <- function(input, output, session) {
       !all(is.na(col) | col == '' | isFALSE(col)), logical(1))
     non_empty['well'] <- TRUE
     datatable(plate[, non_empty, drop = FALSE],
-              options = list(pageLength = 96, dom = 't', scrollX = TRUE))
+              selection = 'none',
+              options   = list(pageLength = 96, dom = 't', scrollX = TRUE),
+              callback  = JS("
+                table.on('dblclick', 'tr', function() {
+                  var idx = table.row(this).index();
+                  if (idx === undefined || isNaN(idx)) return;
+                  Shiny.setInputValue('plate_row_dblclick',
+                    {row: idx + 1, ts: Date.now()}, {priority: 'event'});
+                });
+              "))
   })
 
   output$downloadTemplate <- downloadHandler(
