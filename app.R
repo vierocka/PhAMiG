@@ -910,7 +910,11 @@ ui_submit <- fluidPage(
                   textInput('upload_email',
                     req_label('Your email',
                       'Needed to verify your identity for deletion. Not stored in plain text. Max 200 characters.'),
-                    placeholder = 'yourname@institution.edu')
+                    placeholder = 'yourname@institution.edu'),
+                  textInput('upload_orcid',
+                    opt_label('ORCID',
+                      'Your 16-digit ORCID researcher identifier. Format: 0000-0000-0000-0000. See orcid.org. Used to link datasets to your researcher profile.'),
+                    placeholder = '0000-0000-0000-0000')
                 ),
                 column(6,
                   passwordInput('upload_passphrase',
