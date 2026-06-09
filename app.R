@@ -942,8 +942,17 @@ ui_submit <- fluidPage(
       fluidRow(
         column(6,
           tags$div(class = 'manage-panel',
+            h4(icon('search'), ' Check release status'),
+            helpText('Enter your email to see all your datasets and their current release status.'),
+            textInput('status_email', 'Your email', placeholder = 'yourname@institution.edu'),
+            actionButton('run_status_check', 'Show my datasets', class = 'btn-info', width = '100%'),
+            br(), br(),
+            DTOutput('my_datasets_table')
+          ),
+          br(),
+          tags$div(class = 'manage-panel',
             h4(icon('trash'), ' Delete a dataset'),
-            helpText('All three factors must match the values you provided at upload time. Deletion is permanent and removes raw data, metadata, and all analysis results.'),
+            helpText('All four factors must match the values you provided at upload time. Deletion is permanent and removes raw data, metadata, and all analysis results.'),
             br(),
             textInput('del_dataset_id',
               req_label('Dataset ID to delete',
@@ -966,15 +975,6 @@ ui_submit <- fluidPage(
                          class = 'btn-danger', width = '100%'),
             br(), br(),
             verbatimTextOutput('delete_status')
-          ),
-          br(),
-          tags$div(class = 'manage-panel',
-            h4(icon('search'), ' Check release status'),
-            helpText('Enter your email to see all your datasets and their current release status.'),
-            textInput('status_email', 'Your email', placeholder = 'yourname@institution.edu'),
-            actionButton('run_status_check', 'Show my datasets', class = 'btn-info', width = '100%'),
-            br(), br(),
-            DTOutput('my_datasets_table')
           )
         ),
         column(6,
@@ -2422,6 +2422,27 @@ server <- function(input, output, session) {
     })
   })
 
+  # ── Shared helper: refresh the "my datasets" table for a given email ────────
+  .refresh_my_datasets <- function(email) {
+    if (!nzchar(trimws(email %||% ''))) return()
+    tryCatch({
+      my_ds <- qres_my_datasets(con, email)
+      keep  <- intersect(c('dataset_id', 'species', 'medium_type', 'temperature_c',
+                            'release_mode', 'release_date', 'released', 'created_at'),
+                         names(my_ds))
+      output$my_datasets_table <- renderDT({
+        datatable(my_ds[, keep, drop = FALSE],
+                  options = list(pageLength = 10, scrollX = TRUE),
+                  rownames = FALSE)
+      })
+    }, error = function(e) NULL)
+  }
+
+  # ── Status check (my datasets) ──────────────────────────────────────────────
+  observeEvent(input$run_status_check, {
+    .refresh_my_datasets(trimws(input$status_email %||% ''))
+  })
+
   # ── Delete dataset ──────────────────────────────────────────────────────────
   observeEvent(input$run_delete, {
     dataset_id  <- trimws(input$del_dataset_id  %||% '')
@@ -2448,22 +2469,12 @@ server <- function(input, output, session) {
       if (result$ok) paste('✓', result$message)
       else           paste('✗', result$message)
     )
-    if (isTRUE(result$ok)) dataset_results(qres_search_datasets(con))
-  })
-
-  # ── Status check (my datasets) ──────────────────────────────────────────────
-  observeEvent(input$run_status_check, {
-    email <- trimws(input$status_email %||% '')
-    if (!nzchar(email)) return()
-    tryCatch({
-      my_ds <- qres_my_datasets(con, email)
-      output$my_datasets_table <- renderDT({
-        datatable(my_ds[, c('dataset_id', 'species', 'medium_type', 'temperature_c',
-                             'release_mode', 'release_date', 'released', 'created_at')],
-                  options = list(pageLength = 10, scrollX = TRUE),
-                  rownames = FALSE)
-      })
-    }, error = function(e) NULL)
+    if (isTRUE(result$ok)) {
+      dataset_results(qres_search_datasets(con))
+      # Mirror email into the status field and refresh the table
+      updateTextInput(session, 'status_email', value = email)
+      .refresh_my_datasets(email)
+    }
   })
 
   output$recent_datasets_table <- renderDT({
