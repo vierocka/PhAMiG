@@ -106,12 +106,11 @@ opt_label <- function(label, tooltip = NULL) {
     if (!is.na(n)) return(n)
     parts <- suppressWarnings(as.numeric(strsplit(v, ':', fixed = TRUE)[[1]]))
     if (any(is.na(parts))) return(NA_real_)
-    switch(length(parts),
-      `2` = parts[1]/60 + parts[2]/3600,                              # mm:ss
-      `3` = parts[1] + parts[2]/60 + parts[3]/3600,                   # hh:mm:ss
-      `4` = parts[1]*24 + parts[2] + parts[3]/60 + parts[4]/3600,     # dd:hh:mm:ss
-      NA_real_
-    )
+    np <- length(parts)
+    if (np == 2L) return(parts[1]/60 + parts[2]/3600)                            # mm:ss
+    if (np == 3L) return(parts[1] + parts[2]/60 + parts[3]/3600)                 # hh:mm:ss
+    if (np == 4L) return(parts[1]*24 + parts[2] + parts[3]/60 + parts[4]/3600)   # dd:hh:mm:ss
+    NA_real_
   }, numeric(1), USE.NAMES = FALSE)
 }
 
