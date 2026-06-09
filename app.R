@@ -2048,7 +2048,8 @@ server <- function(input, output, session) {
     non_empty['well'] <- TRUE
     datatable(plate[, non_empty, drop = FALSE],
               selection = 'none',
-              options   = list(pageLength = 96, dom = 't', scrollX = TRUE),
+              options   = list(pageLength = 10, dom = 'lt', scrollX = TRUE,
+                               lengthMenu = list(c(10, -1), c('10', 'All'))),
               callback  = JS("
                 table.on('dblclick', 'tr', function() {
                   var idx = table.row(this).index();
