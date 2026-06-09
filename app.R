@@ -231,10 +231,19 @@ ui_metadata <- fluidPage(
       conditionalPanel("input.meta_perturb_type == 'temperature'",
         textInput('meta_temp_start',
           tags$span(class='required-label', 'Starting temperature (°C) ★'),
-          placeholder = '30'),
+          placeholder = '25'),
         textInput('meta_temp_step',
-          'Step per column (°C)',
-          placeholder = '1  (leave blank = same temp all wells)')
+          opt_label('Step per column (°C)',
+            'Temperature increment between adjacent columns. If left blank but Ending temperature is set, the step is calculated automatically from start → end across the plate columns.'),
+          placeholder = '1'),
+        textInput('meta_temp_end',
+          opt_label('Ending temperature (°C)',
+            'Temperature of the last column. Used to auto-calculate the step when Step is left blank.'),
+          placeholder = '45'),
+        textInput('meta_temp_control',
+          opt_label('Control temperature (°C)',
+            'Column whose temperature matches this value will be marked as control (is_control = TRUE). Typically 37°C for E. coli experiments.'),
+          placeholder = '37')
       ),
 
       tags$hr(),
@@ -341,8 +350,8 @@ ui_metadata <- fluidPage(
                 tags$tr(
                   tags$td(tags$span(class='optional-label', 'replicate')),
                   tags$td('Optional fields'),
-                  tags$td('Biological replicate index for this plate'),
-                  tags$td('1, 2, 3'))
+                  tags$td('Replicate number per well — cycled across non-blank, non-control wells'),
+                  tags$td('1, 2, 3, 4 → repeats'))
               )
             )
           ),
@@ -1721,16 +1730,43 @@ server <- function(input, output, session) {
       muts <- trimws(strsplit(input$meta_genetic_bg, ',')[[1]])
       if (length(muts) > 0) plate$perturbation <- muts
     } else if (ptype == 'temperature') {
-      start_t <- .extract_num(input$meta_temp_start)
-      step_t  <- if (nzchar(input$meta_temp_step)) .extract_num(input$meta_temp_step) else 0
-      plate$perturbation <- rep(start_t + step_t * (seq_len(nc) - 1), times = nr)
+      # Temperature IS the perturbation — no chemical concentration
+      plate$concentration <- 0
+
+      # Fill temperatures only into non-blank, non-control wells, in reading order
+      eligible <- which(!plate$is_blank & !plate$is_control)
+      n_elig   <- length(eligible)
+
+      if (n_elig > 0) {
+        start_t <- .extract_num(input$meta_temp_start)
+        end_t   <- if (nzchar(trimws(input$meta_temp_end  %||% ''))) .extract_num(input$meta_temp_end)  else NA_real_
+        step_t  <- if (nzchar(trimws(input$meta_temp_step %||% ''))) .extract_num(input$meta_temp_step) else NA_real_
+        if (is.na(step_t))
+          step_t <- if (!is.na(end_t) && n_elig > 1) (end_t - start_t) / (n_elig - 1) else 0
+
+        temps <- start_t + step_t * (seq_len(n_elig) - 1)
+        plate$perturbation[eligible] <- as.character(temps)
+
+        # Optionally mark a specific temperature as control within the gradient
+        ctrl_t <- if (nzchar(trimws(input$meta_temp_control %||% ''))) .extract_num(input$meta_temp_control) else NA_real_
+        if (!is.na(ctrl_t)) {
+          ctrl_in_elig <- eligible[abs(temps - ctrl_t) < 0.5]
+          if (length(ctrl_in_elig) > 0) plate$is_control[ctrl_in_elig] <- TRUE
+        }
+      }
     }
 
     # Optional fields (only if panel is open and inputs exist)
     if (!is.null(input$meta_medium_state))
       plate$medium_state <- input$meta_medium_state
-    if (!is.null(input$meta_replicate))
-      plate$replicate <- suppressWarnings(as.integer(input$meta_replicate))
+    # Replicate sequence: cycle across all wells that are not blank and not control
+    rep_labels <- .parse_replicate_seq(input$meta_replicate_seq %||% '')
+    if (length(rep_labels) > 0) {
+      eligible <- which(!plate$is_blank & !plate$is_control)
+      if (length(eligible) > 0)
+        plate$replicate[eligible] <-
+          rep_labels[((seq_along(eligible) - 1L) %% length(rep_labels)) + 1L]
+    }
     if (!is.null(input$meta_taxon_id) && nzchar(trimws(input$meta_taxon_id)))
       plate$taxon_id <- trimws(input$meta_taxon_id)
 
@@ -1779,10 +1815,10 @@ server <- function(input, output, session) {
         opt_label('Medium state',
           'Physical state of the growth medium. Liquid is the default for plate reader experiments.'),
         choices = c('liquid', 'solid', 'semi-solid'), selected = 'liquid'),
-      numericInput('meta_replicate',
-        opt_label('Replicate number',
-          'Biological replicate index for this plate (1, 2, 3…). All wells get the same number.'),
-        value = 1, min = 1, step = 1),
+      textInput('meta_replicate_seq',
+        opt_label('Replicate pattern',
+          'Replicate numbers assigned cyclically across all wells except blanks and controls. Comma-separated (1, 2, 3, 4) or range (1:4) — both give the same result. Example: 1:4 labels wells as 1, 2, 3, 4, 1, 2, 3, 4, …'),
+        placeholder = 'e.g. 1:4 or 1, 2, 3, 4'),
       textInput('meta_taxon_id',
         opt_label('NCBI Taxon ID',
           'Numeric identifier from NCBI Taxonomy. Example: 562 for Escherichia coli, 4932 for S. cerevisiae.'),

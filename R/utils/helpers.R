@@ -21,6 +21,25 @@ opt_label <- function(label, tooltip = NULL) {
   if (!is.null(tooltip)) tagAppendChild(lbl, tip(tooltip)) else lbl
 }
 
+# Parse replicate sequence: "1, 2, 3, 4" or "1:4" or mixed "1:3, 5"
+# Returns integer vector.
+.parse_replicate_seq <- function(x) {
+  if (!nzchar(trimws(x %||% ''))) return(integer(0))
+  parts <- trimws(strsplit(x, ',')[[1]])
+  parts <- parts[nzchar(parts)]
+  out <- integer(0)
+  for (p in parts) {
+    if (grepl('^\\d+:\\d+$', trimws(p))) {
+      ends <- as.integer(strsplit(trimws(p), ':')[[1]])
+      out <- c(out, ends[1]:ends[2])
+    } else {
+      v <- suppressWarnings(as.integer(trimws(p)))
+      if (!is.na(v)) out <- c(out, v)
+    }
+  }
+  out
+}
+
 # Parse a well list with comma separation and colon-range notation.
 # "A1, H12, A12:E12"  →  c("A1","H12","A12","B12","C12","D12","E12")
 # A12:E12 = same column (12), rows A–E.   A1:A6 = same row (A), columns 1–6.
