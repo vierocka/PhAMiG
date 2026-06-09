@@ -85,6 +85,24 @@ opt_label <- function(label, tooltip = NULL) {
   out
 }
 
+# Parse a time column to decimal hours.
+# Accepts: numeric (returned as-is), "H:MM:SS", "HH:MM:SS", "H:MM" formats.
+# Returns numeric vector; unrecognised values become NA.
+.parse_time_to_hours <- function(x) {
+  num <- suppressWarnings(as.numeric(x))
+  if (mean(is.na(num), na.rm = TRUE) <= 0.1) return(num)   # already numeric
+  vapply(as.character(x), function(v) {
+    if (is.na(v) || !nzchar(trimws(v))) return(NA_real_)
+    n <- suppressWarnings(as.numeric(v))
+    if (!is.na(n)) return(n)
+    parts <- suppressWarnings(as.numeric(strsplit(trimws(v), ':', fixed = TRUE)[[1]]))
+    if (any(is.na(parts))) return(NA_real_)
+    if (length(parts) == 3L) return(parts[1] + parts[2]/60 + parts[3]/3600)
+    if (length(parts) == 2L) return(parts[1] + parts[2]/60)
+    NA_real_
+  }, numeric(1), USE.NAMES = FALSE)
+}
+
 qres_clean_undefined <- function(x) {
   x <- as.character(x)
   x[x %in% c('', 'undefined', 'NA', 'NaN', 'NULL')] <- NA_character_

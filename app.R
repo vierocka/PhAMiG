@@ -766,27 +766,27 @@ ui_submit <- fluidPage(
             # STEP 2: Dataset metadata
             tags$p(class = 'step-label', '② Dataset metadata'),
             fluidRow(
-              column(8,
+              column(6,
                 textInput('upload_dataset_id',
                   req_label('Dataset ID',
                     'Unique identifier linking all tables. Allowed characters: letters, digits, underscore, hyphen, dot. Max 100 characters. Example: ecoli_MOPS_37C_2026_smith'),
                   placeholder = 'ecoli_MOPS_37C_2026_smith', value = '')
-              )
-            ),
-            fluidRow(
-              column(6, textInput('upload_temp_c',
-                req_label('Temperature (°C)',
-                  'Incubation temperature in degrees Celsius. Valid range: -5 to 105. Example: 37'),
-                placeholder = '37'))
-            ),
-            fluidRow(
+              ),
               column(6,
                 textInput('upload_species',
                   req_label('Species',
                     'Scientific or common name. Max 120 characters. Examples: "Escherichia coli", "Saccharomyces cerevisiae", "Bacillus subtilis"'),
                   placeholder = 'Escherichia coli')
+              )
+            ),
+            fluidRow(
+              column(3,
+                textInput('upload_temp_c',
+                  req_label('Temperature (°C)',
+                    'Incubation temperature in degrees Celsius. Valid range: -5 to 105. Example: 37'),
+                  placeholder = '37')
               ),
-              column(6,
+              column(9,
                 textInput('upload_medium',
                   req_label('Medium type',
                     'Growth medium full description. Max 200 characters. Examples: "LB", "MOPS + 3 g/L glucose", "YPD"'),
