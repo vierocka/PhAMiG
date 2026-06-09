@@ -201,10 +201,11 @@ ui_metadata <- fluidPage(
 
       tags$label(class='required-label', 'Perturbation type ★'),
       radioButtons('meta_perturb_type', label = NULL,
-        choices = c('Chemical stressor' = 'chemical',
-                    'Genetic modification' = 'genetic',
-                    'Temperature gradient' = 'temperature',
-                    'None (replicates only)' = 'none'),
+        choices = c('Chemical stressor'           = 'chemical',
+                    'Genetic modification'         = 'genetic',
+                    'Chemical + Genetic'           = 'chemical_genetic',
+                    'Temperature gradient'         = 'temperature',
+                    'None (replicates only)'       = 'none'),
         selected = 'none'),
 
       tags$hr(),
@@ -224,8 +225,59 @@ ui_metadata <- fluidPage(
 
       conditionalPanel("input.meta_perturb_type == 'genetic'",
         textInput('meta_genetic_bg',
-          tags$span(class='required-label', 'Mutation / genetic background ★'),
-          placeholder = 'ΔtrpB  (comma-separate multiple)')
+          opt_label('Mutation / genetic background ★',
+            'Comma-separated list of mutations or strain names. Assigned in order to all wells that are not blank and not control, cycling if there are more wells than mutations. Example: ΔtrpB, ΔlacZ, ΔaraB → A6 gets ΔtrpB, A7 gets ΔlacZ, A8 gets ΔaraB, A9 gets ΔtrpB again, …'),
+          placeholder = 'ΔtrpB, ΔlacZ, ΔaraB'),
+        tags$small(style = 'display:block; margin:8px 0 3px; color:#555;',
+          icon('circle-info'), ' ',
+          'The ', tags$strong('concentration'), ' column can represent inoculation volume,',
+          ' initial cell density, or any numeric gradient — for example a serial dilution',
+          ' of a mutant stock across columns.'
+        ),
+        fluidRow(
+          column(7, textInput('meta_gen_conc', 'Starting concentration',
+                              placeholder = '1000')),
+          column(5, textInput('meta_gen_conc_unit', 'Unit',
+                              placeholder = 'cells/mL'))
+        ),
+        checkboxInput('meta_gen_dilution', 'Serial dilution along columns'),
+        conditionalPanel('input.meta_gen_dilution == true',
+          textInput('meta_gen_ratio', 'Dilution ratio', placeholder = '1:2'))
+      ),
+
+      conditionalPanel("input.meta_perturb_type == 'chemical_genetic'",
+        tags$small(tags$strong('— Chemical stressor —')),
+        textInput('meta_cg_perturb',
+          tags$span(class='required-label', 'Drug / stressor name ★'),
+          placeholder = 'rifampicin'),
+        fluidRow(
+          column(7, textInput('meta_cg_chem_conc', 'Starting concentration',
+                              placeholder = '128')),
+          column(5, textInput('meta_cg_chem_unit', 'Unit', placeholder = 'µg/mL'))
+        ),
+        checkboxInput('meta_cg_chem_dilution', 'Serial dilution along columns'),
+        conditionalPanel('input.meta_cg_chem_dilution == true',
+          textInput('meta_cg_chem_ratio', 'Dilution ratio', placeholder = '1:2')),
+        tags$hr(style = 'margin:6px 0;'),
+        tags$small(tags$strong('— Genetic modification —')),
+        textInput('meta_cg_genetic_bg',
+          opt_label('Mutation / genetic background ★',
+            'Comma-separated mutations cycling across non-blank, non-control wells — same logic as the Genetic modification type. Per well the perturbation column stores: drug;mutation.'),
+          placeholder = 'ΔtrpB, ΔlacZ'),
+        tags$small(style = 'display:block; margin:6px 0 3px; color:#555;',
+          icon('circle-info'), ' ',
+          'Concentration column stores two values: ',
+          tags$code('chemical_conc;inoculum'),
+          ' — first = drug concentration, second = inoculation volume.'
+        ),
+        fluidRow(
+          column(7, textInput('meta_cg_inoc_conc', 'Inoculum starting value',
+                              placeholder = '1000')),
+          column(5, textInput('meta_cg_inoc_unit', 'Unit', placeholder = 'cells/mL'))
+        ),
+        checkboxInput('meta_cg_inoc_dilution', 'Serial dilution along columns'),
+        conditionalPanel('input.meta_cg_inoc_dilution == true',
+          textInput('meta_cg_inoc_ratio', 'Inoculum dilution ratio', placeholder = '1:2'))
       ),
 
       conditionalPanel("input.meta_perturb_type == 'temperature'",
@@ -1727,8 +1779,68 @@ server <- function(input, output, session) {
         plate$concentration <- .extract_num(input$meta_conc)
       }
     } else if (ptype == 'genetic') {
-      muts <- trimws(strsplit(input$meta_genetic_bg, ',')[[1]])
-      if (length(muts) > 0) plate$perturbation <- muts
+      muts <- trimws(strsplit(input$meta_genetic_bg %||% '', ',')[[1]])
+      muts <- muts[nzchar(muts)]
+      if (length(muts) > 0) {
+        eligible <- which(!plate$is_blank & !plate$is_control)
+        if (length(eligible) > 0)
+          plate$perturbation[eligible] <-
+            muts[((seq_along(eligible) - 1L) %% length(muts)) + 1L]
+      }
+      plate$concentration_unit <- trimws(input$meta_gen_conc_unit %||% '')
+      if (isTRUE(input$meta_gen_dilution) && nzchar(input$meta_gen_ratio %||% '')) {
+        ratio <- as.numeric(strsplit(input$meta_gen_ratio, ':')[[1]])
+        a <- ratio[1]; b <- ratio[2]; start <- .extract_num(input$meta_gen_conc)
+        for (j in seq_len(nr)) for (i in seq_len(nc))
+          plate[nc*(j-1)+i, 'concentration'] <- start * (a/b)^(i-1)
+      } else if (nzchar(trimws(input$meta_gen_conc %||% ''))) {
+        plate$concentration <- .extract_num(input$meta_gen_conc)
+      }
+
+    } else if (ptype == 'chemical_genetic') {
+      drug <- trimws(input$meta_cg_perturb %||% '')
+      muts <- trimws(strsplit(input$meta_cg_genetic_bg %||% '', ',')[[1]])
+      muts <- muts[nzchar(muts)]
+
+      # Chemical concentration per well (as character for semicolon combining)
+      chem_v <- rep(NA_character_, nrow(plate))
+      if (isTRUE(input$meta_cg_chem_dilution) && nzchar(input$meta_cg_chem_ratio %||% '')) {
+        ratio <- as.numeric(strsplit(input$meta_cg_chem_ratio, ':')[[1]])
+        a <- ratio[1]; b <- ratio[2]; start <- .extract_num(input$meta_cg_chem_conc)
+        for (j in seq_len(nr)) for (i in seq_len(nc))
+          chem_v[nc*(j-1)+i] <- as.character(start * (a/b)^(i-1))
+      } else if (nzchar(trimws(input$meta_cg_chem_conc %||% ''))) {
+        chem_v[] <- as.character(.extract_num(input$meta_cg_chem_conc))
+      }
+
+      # Inoculum per well
+      inoc_v <- rep(NA_character_, nrow(plate))
+      if (isTRUE(input$meta_cg_inoc_dilution) && nzchar(input$meta_cg_inoc_ratio %||% '')) {
+        ratio <- as.numeric(strsplit(input$meta_cg_inoc_ratio, ':')[[1]])
+        a <- ratio[1]; b <- ratio[2]; start <- .extract_num(input$meta_cg_inoc_conc)
+        for (j in seq_len(nr)) for (i in seq_len(nc))
+          inoc_v[nc*(j-1)+i] <- as.character(start * (a/b)^(i-1))
+      } else if (nzchar(trimws(input$meta_cg_inoc_conc %||% ''))) {
+        inoc_v[] <- as.character(.extract_num(input$meta_cg_inoc_conc))
+      }
+
+      # Combine: "chem;inoc" in concentration column
+      plate$concentration      <- paste0(ifelse(is.na(chem_v), '', chem_v),
+                                         ';',
+                                         ifelse(is.na(inoc_v), '', inoc_v))
+      plate$concentration_unit <- paste0(trimws(input$meta_cg_chem_unit %||% ''),
+                                         ';',
+                                         trimws(input$meta_cg_inoc_unit %||% ''))
+
+      # Perturbation: "drug" for all wells; "drug;mutation" for eligible wells
+      if (nzchar(drug)) plate$perturbation <- drug
+      eligible <- which(!plate$is_blank & !plate$is_control)
+      if (length(muts) > 0 && length(eligible) > 0) {
+        well_muts <- muts[((seq_along(eligible) - 1L) %% length(muts)) + 1L]
+        plate$perturbation[eligible] <- if (nzchar(drug))
+          paste0(drug, ';', well_muts) else well_muts
+      }
+
     } else if (ptype == 'temperature') {
       # Temperature IS the perturbation — no chemical concentration
       plate$concentration <- 0
