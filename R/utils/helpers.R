@@ -86,20 +86,32 @@ opt_label <- function(label, tooltip = NULL) {
 }
 
 # Parse a time column to decimal hours.
-# Accepts: numeric (returned as-is), "H:MM:SS", "HH:MM:SS", "H:MM" formats.
-# Returns numeric vector; unrecognised values become NA.
+#
+# Colon-separated formats (auto-detected by part count):
+#   dd:hh:mm:ss  → days · 24 + hours + minutes/60 + seconds/3600
+#   hh:mm:ss     → hours + minutes/60 + seconds/3600
+#   mm:ss        → minutes/60 + seconds/3600
+#
+# Plain numeric values are returned as-is (assumed to already be in hours).
+# Unrecognised values become NA.
 .parse_time_to_hours <- function(x) {
+  x <- as.character(x)
   num <- suppressWarnings(as.numeric(x))
-  if (mean(is.na(num), na.rm = TRUE) <= 0.1) return(num)   # already numeric
-  vapply(as.character(x), function(v) {
-    if (is.na(v) || !nzchar(trimws(v))) return(NA_real_)
+  if (mean(is.na(num), na.rm = TRUE) <= 0.1) return(num)   # already numeric (hours)
+
+  vapply(x, function(v) {
+    v <- trimws(v)
+    if (is.na(v) || !nzchar(v)) return(NA_real_)
     n <- suppressWarnings(as.numeric(v))
     if (!is.na(n)) return(n)
-    parts <- suppressWarnings(as.numeric(strsplit(trimws(v), ':', fixed = TRUE)[[1]]))
+    parts <- suppressWarnings(as.numeric(strsplit(v, ':', fixed = TRUE)[[1]]))
     if (any(is.na(parts))) return(NA_real_)
-    if (length(parts) == 3L) return(parts[1] + parts[2]/60 + parts[3]/3600)
-    if (length(parts) == 2L) return(parts[1] + parts[2]/60)
-    NA_real_
+    switch(length(parts),
+      `2` = parts[1]/60 + parts[2]/3600,                              # mm:ss
+      `3` = parts[1] + parts[2]/60 + parts[3]/3600,                   # hh:mm:ss
+      `4` = parts[1]*24 + parts[2] + parts[3]/60 + parts[4]/3600,     # dd:hh:mm:ss
+      NA_real_
+    )
   }, numeric(1), USE.NAMES = FALSE)
 }
 
