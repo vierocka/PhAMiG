@@ -795,7 +795,17 @@ ui_ask <- fluidPage(
           tags$small(style = 'color: dimgray;',
             icon('hourglass-half'), ' DGrowthR (GP) and KinBiont (Julia) are slow — 30 s–3 min per dataset.'))
       ),
-      withSpinner(plotOutput('nl_comp_plot', height = '420px'), type = 6, color = '#5b9bd5')),
+      withSpinner(plotOutput('nl_comp_plot', height = '420px'), type = 6, color = '#5b9bd5'),
+      br(),
+      fluidRow(
+        column(12,
+          tags$b('Fitted parameters — all wells', style = 'font-size:13px;'),
+          tags$span(style = 'margin-left:10px;',
+            downloadButton('nl_comp_dl_csv', 'Download CSV', class = 'btn-sm btn-default'))
+        )
+      ),
+      br(),
+      withSpinner(DT::DTOutput('nl_comp_table'), type = 6, color = '#5b9bd5')),
     tabPanel('Growth curves',
       br(),
       uiOutput('nl_curves_panel'))
@@ -3454,99 +3464,163 @@ server <- function(input, output, session) {
         ' No blank wells designated in these datasets. Select a different method.')
   })
 
-  output$nl_comp_plot <- renderPlot({
+  # ── Shared computation: run plugins on NL-selected datasets ─────────────────
+  # Cached without nl_metric_select (plot filters post-hoc; table shows all).
+  nl_comp_metrics_long <- reactive({
     req(nl_result())
-    res      <- nl_result()
-    metric   <- input$nl_metric_select %||% 'doubling_time_h'
-    nl_bm    <- input$nl_comp_baseline %||% 'none'
+    res  <- nl_result()
+    nl_bm <- input$nl_comp_baseline %||% 'none'
 
-    # LLM-returned comparison result (type='comparison')
-    if (res$type == 'comparison' && !is.null(res$data) && nrow(res$data) > 0) {
-      return(qres_plot_metric_comparison(res$data, metric = metric,
-               facet_by = if (length(unique(res$data$dataset_id)) > 1) 'dataset_id' else NULL))
+    if (res$type == 'comparison' && !is.null(res$data) && nrow(res$data) > 0)
+      return(res$data)
+
+    if (res$type != 'table' || is.null(res$data) ||
+        !'dataset_id' %in% names(res$data) || nrow(res$data) == 0)
+      return(data.frame())
+
+    ids <- nl_active_ids()
+    user_sel <- length(input$nl_table_rows_selected) > 0
+    if (!user_sel) ids <- head(ids, 5)
+    if (length(ids) == 0) return(data.frame())
+
+    nl_blank_ids <- if (nl_bm == 'blank_wells')
+      tryCatch(qres_get_blank_wells(con, ids), error = function(e) character(0))
+    else character(0)
+
+    .nl_label <- function(did) {
+      row   <- res$data[res$data$dataset_id == did, ][1, ]
+      sp    <- trimws(row$species %||% '')
+      tc    <- row$temperature_c %||% NA
+      ptype <- tolower(trimws(row$perturbation_type %||% ''))
+      pert  <- trimws(row$perturbation %||% '')
+      lab   <- paste0(if (nzchar(sp)) sp else did,
+                      if (is.finite(as.numeric(tc))) paste0(' ', round(as.numeric(tc), 1), '°C') else '')
+      show  <- nzchar(pert) &&
+               !tolower(pert) %in% c('none', 'na', '') &&
+               !ptype %in% c('temperature', 'none', '') &&
+               is.na(suppressWarnings(as.numeric(pert)))
+      if (show) lab <- paste0(lab, ' + ', pert)
+      lab
     }
 
-    # Rule-based table result: run comparison on active ids
-    if (res$type == 'table' && !is.null(res$data) &&
-        'dataset_id' %in% names(res$data) && nrow(res$data) > 0) {
-      user_sel <- length(input$nl_table_rows_selected) > 0
-      ids <- nl_active_ids()
-      if (!user_sel) ids <- head(ids, 5)
-      if (length(ids) == 0) {
-        return(ggplot2::ggplot() +
-          ggplot2::annotate('text', x = .5, y = .5, size = 4.5, colour = 'grey50',
-            label = 'No raw data registered for these datasets.') +
-          ggplot2::theme_void())
-      }
-      nl_blank_ids <- if (nl_bm == 'blank_wells')
-        tryCatch(qres_get_blank_wells(con, ids), error = function(e) character(0))
-      else character(0)
+    nl_tools      <- input$nl_comp_tools %||% c('model_free', 'gcplyr', 'growthrates')
+    nl_py_plugins <- intersect(nl_tools, 'omniplate')
+    nl_r_plugins  <- setdiff(nl_tools, nl_py_plugins)
 
-      .nl_label <- function(did) {
-        row   <- res$data[res$data$dataset_id == did, ][1, ]
-        sp    <- trimws(row$species %||% '')
-        tc    <- row$temperature_c %||% NA
-        ptype <- tolower(trimws(row$perturbation_type %||% ''))
-        pert  <- trimws(row$perturbation %||% '')
-        lab   <- paste0(if (nzchar(sp)) sp else did,
-                        if (is.finite(as.numeric(tc))) paste0(' ', round(as.numeric(tc), 1), '°C') else '')
-        show  <- nzchar(pert) &&
-                 !tolower(pert) %in% c('none', 'na', '') &&
-                 !ptype %in% c('temperature', 'none', '') &&
-                 is.na(suppressWarnings(as.numeric(pert)))
-        if (show) lab <- paste0(lab, ' + ', pert)
-        lab
-      }
-      nl_tools      <- input$nl_comp_tools %||% c('model_free', 'gcplyr', 'growthrates')
-      nl_py_plugins <- intersect(nl_tools, 'omniplate')
-      nl_r_plugins  <- setdiff(nl_tools, nl_py_plugins)
-      all_cmp <- lapply(ids, function(did) {
-        raw <- tryCatch(qres_get_raw_curves(con, did), error = function(e) NULL)
-        if (is.null(raw)) return(NULL)
-        raw <- .apply_baseline(raw, method = nl_bm, blank_ids = nl_blank_ids)
-        cmp <- tryCatch(
-          qres_compare_plugin_outputs(raw, plugins = nl_r_plugins),
-          error = function(e) NULL)
-        if (length(nl_py_plugins) > 0) {
-          py_cmp <- tryCatch({
-            r <- qres_run_plugin(raw, 'omniplate')
-            if (!is.null(r$derived_metrics) && nrow(r$derived_metrics) > 0) {
-              dplyr::mutate(r$derived_metrics, tool = 'omniplate')
-            } else {
-              msg <- r$logs$message %||% 'no metrics returned'
-              message('[NL omniplate] ', did, ': ', msg)
-              NULL
-            }
-          }, error = function(e) {
-            message('[NL omniplate] ', did, ': ', conditionMessage(e))
+    all_cmp <- lapply(ids, function(did) {
+      raw <- tryCatch(qres_get_raw_curves(con, did), error = function(e) NULL)
+      if (is.null(raw)) return(NULL)
+      raw <- .apply_baseline(raw, method = nl_bm, blank_ids = nl_blank_ids)
+      cmp <- tryCatch(
+        qres_compare_plugin_outputs(raw, plugins = nl_r_plugins),
+        error = function(e) NULL)
+      if (length(nl_py_plugins) > 0) {
+        py_cmp <- tryCatch({
+          r <- qres_run_plugin(raw, 'omniplate')
+          if (!is.null(r$derived_metrics) && nrow(r$derived_metrics) > 0) {
+            dplyr::mutate(r$derived_metrics, tool = 'omniplate')
+          } else {
+            message('[NL omniplate] ', did, ': ', r$logs$message %||% 'no metrics returned')
             NULL
-          })
-          cmp <- dplyr::bind_rows(cmp, py_cmp)
-        }
-        if (!is.null(cmp) && nrow(cmp) > 0) {
-          cmp$dataset_id <- did
-          cmp$plot_label <- .nl_label(did)
-        }
-        cmp
-      })
-      combined <- dplyr::bind_rows(Filter(Negate(is.null), all_cmp))
-      if (nrow(combined) == 0) {
-        return(ggplot2::ggplot() +
-          ggplot2::annotate('text', x = .5, y = .5, size = 4.5, colour = 'grey50',
-            label = 'No metrics computed for these datasets.') +
-          ggplot2::theme_void())
+          }
+        }, error = function(e) {
+          message('[NL omniplate] ', did, ': ', conditionMessage(e))
+          NULL
+        })
+        cmp <- dplyr::bind_rows(cmp, py_cmp)
       }
-      facet_col <- if ('plot_label' %in% names(combined)) 'plot_label' else 'dataset_id'
-      return(qres_plot_metric_comparison(combined, metric = metric,
-               facet_by = if (length(unique(combined[[facet_col]])) > 1) facet_col else NULL))
+      if (!is.null(cmp) && nrow(cmp) > 0) {
+        cmp$dataset_id <- did
+        cmp$plot_label <- .nl_label(did)
+      }
+      cmp
+    })
+    dplyr::bind_rows(Filter(Negate(is.null), all_cmp))
+  }) |> bindCache(nl_active_ids(), input$nl_table_rows_selected,
+                  input$nl_comp_tools, input$nl_comp_baseline)
+
+  output$nl_comp_plot <- renderPlot({
+    combined <- nl_comp_metrics_long()
+    metric   <- input$nl_metric_select %||% 'doubling_time_h'
+    if (is.null(combined) || nrow(combined) == 0) {
+      return(ggplot2::ggplot() +
+        ggplot2::annotate('text', x = .5, y = .5, size = 5, colour = 'grey50',
+          label = 'Run a query to populate the comparison plot.') +
+        ggplot2::theme_void())
+    }
+    facet_col <- if ('plot_label' %in% names(combined)) 'plot_label' else 'dataset_id'
+    qres_plot_metric_comparison(combined, metric = metric,
+      facet_by = if (length(unique(combined[[facet_col]])) > 1) facet_col else NULL)
+  }) |> bindCache(nl_active_ids(), input$nl_table_rows_selected,
+                  input$nl_comp_tools, input$nl_comp_baseline, input$nl_metric_select)
+
+  # ── Wide table: one row per (dataset × well), columns = tool__metric ─────────
+  .nl_comp_wide <- reactive({
+    long <- nl_comp_metrics_long()
+    if (is.null(long) || nrow(long) == 0) return(data.frame())
+
+    meta <- tryCatch(nl_result()$data, error = function(e) NULL)
+
+    long$well <- sub('^.*__', '', long$well_id)
+
+    wide <- long |>
+      dplyr::select(dataset_id, well_id, well, metric_name, metric_value, tool) |>
+      dplyr::mutate(col_name = paste0(tool, '·', metric_name)) |>
+      dplyr::select(-tool, -metric_name) |>
+      tidyr::pivot_wider(names_from  = col_name,
+                         values_from = metric_value,
+                         values_fn   = mean) |>
+      dplyr::select(-well_id)
+
+    if (!is.null(meta) && 'dataset_id' %in% names(meta)) {
+      meta_cols <- intersect(c('species', 'temperature_c', 'medium_type',
+                                'perturbation_type', 'perturbation'), names(meta))
+      if (length(meta_cols) > 0) {
+        meta_sub <- dplyr::distinct(meta[, c('dataset_id', meta_cols), drop = FALSE])
+        wide <- dplyr::left_join(wide, meta_sub, by = 'dataset_id')
+      }
     }
 
-    ggplot2::ggplot() +
-      ggplot2::annotate('text', x = .5, y = .5, size = 5, colour = 'grey50',
-                        label = 'Run a query to populate the comparison plot.') +
-      ggplot2::theme_void()
-  }) |> bindCache(nl_active_ids(), input$nl_metric_select, input$nl_comp_tools,
-                  input$nl_comp_baseline)
+    front <- intersect(c('dataset_id', 'species', 'temperature_c', 'medium_type',
+                          'perturbation_type', 'perturbation', 'well'), names(wide))
+    metric_cols <- setdiff(names(wide), front)
+    wide <- dplyr::arrange(
+      dplyr::select(wide, dplyr::all_of(c(front, metric_cols))),
+      dataset_id, well)
+    wide
+  })
+
+  output$nl_comp_table <- DT::renderDT({
+    wide <- .nl_comp_wide()
+    if (nrow(wide) == 0)
+      return(DT::datatable(data.frame(Note = 'No results yet — run a query first.'),
+                           rownames = FALSE, options = list(dom = 't')))
+    num_cols <- names(wide)[sapply(wide, is.numeric)]
+    DT::datatable(
+      wide,
+      rownames    = FALSE,
+      filter      = 'top',
+      extensions  = 'RowGroup',
+      options     = list(
+        pageLength  = 50,
+        scrollX     = TRUE,
+        rowGroup    = list(dataSrc = which(names(wide) == 'dataset_id') - 1L),
+        columnDefs  = list(list(visible = FALSE,
+                                targets = which(names(wide) == 'dataset_id') - 1L)),
+        dom         = 'frtip'
+      )
+    ) |> DT::formatRound(num_cols, digits = 4)
+  }, server = TRUE)
+
+  output$nl_comp_dl_csv <- downloadHandler(
+    filename = function() {
+      paste0('nl_comparison_', format(Sys.time(), '%Y%m%d_%H%M%S'), '.csv')
+    },
+    content  = function(file) {
+      wide <- .nl_comp_wide()
+      utils::write.csv(wide, file, row.names = FALSE)
+    }
+  )
 
   output$nl_curves_panel <- renderUI({
     ids <- nl_active_ids()
