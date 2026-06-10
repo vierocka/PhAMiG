@@ -106,6 +106,19 @@ qres_plugin_dgrothr <- function(raw_long, metadata = NULL, params = list()) {
     })
     combined <- dplyr::bind_rows(Filter(Negate(is.null), rows))
 
+    # Derive doubling_time_h = log(2) / mumax_percapita
+    mu_rows <- combined[combined$metric_name == 'mumax_percapita', ]
+    if (nrow(mu_rows) > 0) {
+      dt_rows             <- mu_rows
+      dt_rows$metric_name  <- 'doubling_time_h'
+      dt_rows$metric_value <- ifelse(
+        is.finite(mu_rows$metric_value) & mu_rows$metric_value > 0,
+        log(2) / mu_rows$metric_value, NA_real_
+      )
+      dt_rows$metric_unit <- 'h'
+      combined <- dplyr::bind_rows(combined, dt_rows)
+    }
+
     # Restore full well_id from curve_id mapping
     id_map <- data.frame(
       gpfit_id = seq_len(length(unique(raw_long$well_id))),

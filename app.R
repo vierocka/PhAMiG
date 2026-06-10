@@ -738,6 +738,7 @@ ui_ask <- fluidPage(
   ),
   uiOutput('llm_api_warning'),
   hr(),
+  uiOutput('nl_preview_box'),
   uiOutput('nl_description_box'),
   uiOutput('nl_sql_box'),
   br(),
@@ -2011,10 +2012,18 @@ server <- function(input, output, session) {
       comp_raw_long(result$raws)
       comp_show_email(TRUE)
       n_m <- nrow(result$metrics); n_d <- length(unique(result$metrics$dataset_id))
+      tools_got   <- unique(result$metrics$tool)
+      tools_asked <- .tools
+      tools_miss  <- setdiff(tools_asked, tools_got)
+      miss_note   <- if (length(tools_miss) > 0)
+        paste0(' ⚠ No results from: ', paste(tools_miss, collapse = ', '),
+               ' (check console for errors, or try a different metric).')
+      else ''
       comp_status_msg(paste0(
-        '✓ Done — ', n_m, ' metric rows across ', n_d, ' dataset(s).'
+        '✓ Done — ', n_m, ' metric rows across ', n_d, ' dataset(s). ',
+        'Tools with results: ', paste(tools_got, collapse = ', '), '.', miss_note
       ))
-      avail_tools <- unique(result$metrics$tool)
+      avail_tools <- tools_got
       updateSelectInput(session, 'scatter_x', choices = avail_tools, selected = avail_tools[1])
       updateSelectInput(session, 'scatter_y', choices = avail_tools,
                         selected = avail_tools[min(2, length(avail_tools))])
@@ -2113,11 +2122,26 @@ server <- function(input, output, session) {
         n_datasets  = length(unique(df$dataset_id)),
         attachments = attachments
       )
-      comp_email_status(paste0('Sent to ', addr, '.'))
+      comp_email_status(paste0('Sent to ', addr, '. Results cleared — ready for a new query.'))
+      # Reset everything to default state after sending
+      comparison_result(data.frame())
+      comp_raw_long(NULL)
+      comp_show_email(FALSE)
+      comp_status_msg('')
+      updateCheckboxGroupInput(session, 'comp_tools',
+        selected = c('model_free', 'gcplyr', 'growthrates'))
     }, error = function(e) {
       comp_email_status(paste0('Failed: ', conditionMessage(e)))
     })
   })
+
+  # ── Reset tool checkboxes when navigating away from the Analyse route ────────
+  observeEvent(get_page(), {
+    if (!is_page('analyse')) {
+      updateCheckboxGroupInput(session, 'comp_tools',
+        selected = c('model_free', 'gcplyr', 'growthrates'))
+    }
+  }, ignoreInit = TRUE)
 
   # ── Metadata template generator ────────────────────────────────────────────
   .plate_cols <- function(size) switch(size, '8x12'=12, '16x24'=24, '6x8'=8, '4x6'=6, 12)
@@ -3111,7 +3135,8 @@ server <- function(input, output, session) {
   })
 
   # ── LLM / Ask tab ─────────────────────────────────────────────────────────
-  nl_result <- reactiveVal(NULL)
+  nl_result   <- reactiveVal(NULL)
+  nl_pending  <- reactiveVal(NULL)   # parsed but not yet confirmed
 
   output$llm_api_warning <- renderUI({
     backend <- tryCatch(qres_llm_backend(), error = function(e) 'none')
@@ -3134,13 +3159,58 @@ server <- function(input, output, session) {
     )
   })
 
+  # ── NL preview box: shown after parsing, before results ────────────────────
+  .fmt_filters <- function(filters) {
+    parts <- c()
+    if (!is.null(filters$species))  parts <- c(parts, paste0('species: ', filters$species))
+    if (!is.null(filters$temp_min) || !is.null(filters$temp_max)) {
+      lo <- filters$temp_min %||% '?'; hi <- filters$temp_max %||% '?'
+      parts <- c(parts, paste0('temperature: ', lo, '–', hi, '°C'))
+    }
+    if (!is.null(filters$medium))   parts <- c(parts, paste0('medium contains: "', filters$medium, '"'))
+    if (!is.null(filters$perturbation)) parts <- c(parts, paste0('perturbation: ', filters$perturbation))
+    if (length(parts) == 0) return('(all datasets)')
+    paste(parts, collapse = ', ')
+  }
+
+  output$nl_preview_box <- renderUI({
+    p <- nl_pending()
+    if (is.null(p)) return(NULL)
+    n_total <- nrow(p$rows)
+    n_raw   <- if ('raw_path' %in% names(p$rows)) sum(!is.na(p$rows$raw_path)) else n_total
+    tags$div(
+      class = 'alert alert-warning',
+      style = 'margin-bottom: 8px;',
+      tags$strong(icon('search'), ' Query interpreted as: '),
+      tags$span(p$human_readable),
+      tags$br(),
+      tags$span(style = 'font-size: 13px;',
+        icon('database'), ' Found ', tags$strong(n_total), ' dataset(s)',
+        if (n_raw < n_total)
+          tagList(' (', tags$strong(n_raw), ' with raw measurement data)')
+        else
+          tagList(' — all have raw data'),
+        '.'
+      ),
+      tags$br(), tags$br(),
+      tags$span(style = 'font-size: 12px; color: #666;',
+        'If this is not what you meant, edit your question and ask again.'),
+      tags$br(), tags$br(),
+      actionButton('nl_confirm', 'Show results for this query',
+                   class = 'btn-success btn-sm',
+                   icon  = icon('check'))
+    )
+  })
+
   observeEvent(input$nl_submit, {
     q <- trimws(input$nl_question %||% '')
     req(nzchar(q))
+    nl_result(NULL)
+    nl_pending(NULL)
 
     withProgress(message = 'Interpreting query…', {
 
-      # ── Step 1: Rule-based parser (always works, no key needed) ──────────
+      # ── Step 1: Rule-based parser ──────────────────────────────────────────
       setProgress(0.2, detail = 'Checking patterns…')
       parsed <- tryCatch(qres_parse_nl_query(q), error = function(e) NULL)
 
@@ -3150,18 +3220,18 @@ server <- function(input, output, session) {
           error = function(e) NULL
         )
         if (!is.null(rows) && nrow(rows) > 0) {
-          nl_result(list(
-            type        = 'table',
-            data        = rows,
-            description = paste0('Rule-based: ', paste(names(parsed), collapse = ', ')),
-            sql         = NULL,
-            plot_type   = 'table'
+          nl_pending(list(
+            rows          = rows,
+            human_readable = .fmt_filters(parsed),
+            type          = 'table',
+            description   = paste0('Rule-based: ', paste(names(parsed), collapse = ', ')),
+            sql           = NULL
           ))
           return()
         }
       }
 
-      # ── Step 2: LLM (ellmer — anthropic or ollama) ────────────────────────
+      # ── Step 2: LLM ───────────────────────────────────────────────────────
       if (qres_llm_available()) {
         setProgress(0.5, detail = paste0('Asking ', qres_llm_backend_name(), '…'))
         filters <- tryCatch(qres_nl_to_action(q), error = function(e) NULL)
@@ -3173,13 +3243,13 @@ server <- function(input, output, session) {
             error = function(e) NULL
           )
           if (!is.null(rows) && nrow(rows) > 0) {
-            nl_result(list(
-              type        = 'table',
-              data        = rows,
-              description = paste0('LLM (', qres_llm_backend_name(), '): ',
-                                   paste(names(filters), collapse = ', ')),
-              sql         = NULL,
-              plot_type   = 'table'
+            nl_pending(list(
+              rows          = rows,
+              human_readable = .fmt_filters(filters),
+              type          = 'table',
+              description   = paste0('LLM (', qres_llm_backend_name(), '): ',
+                                     paste(names(filters), collapse = ', ')),
+              sql           = NULL
             ))
             return()
           }
@@ -3201,6 +3271,20 @@ server <- function(input, output, session) {
         plot_type   = 'table'
       ))
     })
+  })
+
+  # ── Confirm pending NL query → populate results ─────────────────────────────
+  observeEvent(input$nl_confirm, {
+    p <- nl_pending()
+    req(!is.null(p))
+    nl_result(list(
+      type        = p$type,
+      data        = p$rows,
+      description = p$description,
+      sql         = p$sql,
+      plot_type   = 'table'
+    ))
+    nl_pending(NULL)
   })
 
   output$nl_description_box <- renderUI({

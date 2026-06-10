@@ -111,19 +111,23 @@ qres_run_plugin <- function(raw_long, plugin, params = list(), metadata = NULL) 
 qres_compare_plugin_outputs <- function(raw_long, plugins = c('model_free', 'gcplyr', 'growthrates'),
                                          params = list()) {
   requireNamespace('dplyr')
+  plugin_errors <- character(0)
   results <- lapply(plugins, function(p) {
     res <- tryCatch(
       .run_plugin_maybe_cached(raw_long, p, params),
       error = function(e) {
-        message('[compare] Plugin ', p, ' failed: ', conditionMessage(e))
+        plugin_errors[[p]] <<- conditionMessage(e)
         list(derived_metrics = data.frame())
       }
     )
-    if (nrow(res$derived_metrics) > 0) {
+    if (!is.null(res$derived_metrics) && nrow(res$derived_metrics) > 0) {
       dplyr::mutate(res$derived_metrics, tool = p)
     } else {
-      NULL
+      if (p %in% names(plugin_errors)) NULL
+      else { plugin_errors[[p]] <<- 'no metrics returned'; NULL }
     }
   })
-  dplyr::bind_rows(Filter(Negate(is.null), results))
+  df <- dplyr::bind_rows(Filter(Negate(is.null), results))
+  attr(df, 'plugin_errors') <- plugin_errors
+  df
 }
