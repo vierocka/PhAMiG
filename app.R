@@ -681,7 +681,7 @@ ui_analyse <- fluidPage(
         actionButton('run_comparison', 'Run comparison', width = '100%',
                      class = 'btn-success'),
         br(), br(),
-        textOutput('comp_status')
+        uiOutput('comp_status_ui')
       )
     ),
     column(9,
@@ -1320,6 +1320,8 @@ server <- function(input, output, session) {
   dataset_results   <- reactiveVal(data.frame())
   comparison_result <- reactiveVal(data.frame())
   comp_raw_long     <- reactiveVal(NULL)
+  comp_status_msg   <- reactiveVal('')
+  comp_show_email   <- reactiveVal(FALSE)
 
   # ── Auto-load on startup — show existing DB data without clicking Initialize
   session$onFlushed(function() {
@@ -1475,7 +1477,7 @@ server <- function(input, output, session) {
     if (!is.null(notify_msg)) showNotification(notify_msg, type = 'message', duration = 4)
   }, ignoreInit = TRUE)
 
-  output$dataset_table <- renderDT({
+  output$dataset_table <- renderDT(server = TRUE, {
     df <- dataset_results()
     if (nrow(df) == 0) return(datatable(data.frame(message = 'No datasets found. Click "Initialize / refresh DB" first.')))
 
@@ -1806,7 +1808,7 @@ server <- function(input, output, session) {
              error = function(e) pub_results(data.frame()))
   })
 
-  output$pub_search_table <- renderDT({
+  output$pub_search_table <- renderDT(server = TRUE, {
     df <- pub_results()
     if (is.null(df))   return(datatable(data.frame(message = 'Loading…')))
     if (nrow(df) == 0) return(datatable(data.frame(message = 'No datasets match the current filters.')))
@@ -1884,87 +1886,143 @@ server <- function(input, output, session) {
     qres_plot_endpoint_heatmap(raw_long())
   })
 
-  # ── Comparison (multi-dataset, multi-tool) ─────────────────────────────────
+  # ── Comparison status + email panel ────────────────────────────────────────
+  output$comp_status_ui <- renderUI({
+    msg   <- comp_status_msg()
+    show  <- comp_show_email()
+    items <- list()
+    if (nzchar(msg)) items <- c(items, list(
+      tags$p(style = 'font-size:12px; color:#555; margin-top:6px;', msg)
+    ))
+    if (show) items <- c(items, list(
+      hr(),
+      tags$p(style = 'font-size:12px; color:#555;',
+        icon('envelope'),
+        ' Email these results to yourself:'),
+      fluidRow(
+        column(8, textInput('comp_email_addr', NULL,
+          value       = Sys.getenv('PHAMIG_ADMIN_EMAIL', unset = ''),
+          placeholder = 'your@email.com')),
+        column(4, actionButton('send_comp_email', 'Send',
+          class = 'btn-default btn-sm', style = 'margin-top:3px;'))
+      ),
+      textOutput('comp_email_status')
+    ))
+    if (length(items)) tagList(items) else NULL
+  })
+
+  # ── Comparison (multi-dataset, multi-tool) — async ──────────────────────────
   observeEvent(input$run_comparison, {
     req(length(input$comp_tools) >= 1)
+    comp_show_email(FALSE)
 
-    withProgress(message = 'Running comparison…', {
-      filtered <- qres_filter_datasets(
-        con,
-        species         = if (nzchar(input$comp_species %||% '')) input$comp_species else NULL,
-        temp_min        = input$comp_temp[1],
-        temp_max        = input$comp_temp[2],
-        medium          = if (nzchar(input$comp_medium %||% '')) input$comp_medium else NULL,
-        registered_only = TRUE
-      )
+    # All DB reads happen on the main thread (DuckDB exclusive connection).
+    filtered <- qres_filter_datasets(
+      con,
+      species         = if (nzchar(input$comp_species %||% '')) input$comp_species else NULL,
+      temp_min        = input$comp_temp[1],
+      temp_max        = input$comp_temp[2],
+      medium          = if (nzchar(input$comp_medium %||% '')) input$comp_medium else NULL,
+      registered_only = TRUE
+    )
 
-      if (nrow(filtered) == 0) {
-        output$comp_status <- renderText('No registered datasets match the filter.')
-        comparison_result(data.frame())
-        return()
-      }
+    if (nrow(filtered) == 0) {
+      comp_status_msg('No registered datasets match the current filters.')
+      comparison_result(data.frame())
+      return()
+    }
 
-      output$comp_status <- renderText(
-        paste('Found', nrow(filtered), 'datasets. Running', length(input$comp_tools), 'tools…')
-      )
+    # Estimate wall-clock time so the user knows what to expect.
+    .secs_per_tool <- c(model_free = 1, gcplyr = 2, growthrates = 3,
+                        omniplate = 30, dgrothr = 45, kinbiont = 120)
+    tools_selected <- input$comp_tools
+    total_sec <- nrow(filtered) *
+      sum(.secs_per_tool[intersect(tools_selected, names(.secs_per_tool))], na.rm = TRUE)
+    .eta <- if (total_sec < 30)  'a few seconds'
+            else if (total_sec < 90)  paste0('about ', round(total_sec / 60, 1), ' min')
+            else paste0('up to ', ceiling(total_sec / 60), ' min')
+    cache_note <- if (any(c('dgrothr', 'kinbiont') %in% tools_selected))
+      ' Previously computed datasets are cached — re-runs are instant.' else ''
+    comp_status_msg(paste0(
+      'Running ', length(tools_selected), ' tool(s) on ', nrow(filtered),
+      ' dataset(s). Estimated time: ', .eta, '.', cache_note,
+      ' The UI stays responsive — check back or switch tabs freely.'
+    ))
+    comparison_result(data.frame())
 
-      # Build human-readable label: "E. coli 37°C" or "E. coli 37°C + rifampicin"
-      # Skip perturbation for temperature/none types — it would just repeat the °C value.
-      .mk_label <- function(sp, tc, ptype, pert) {
-        lab   <- paste0(if (nzchar(sp %||% '')) sp else '?', ' ', round(tc, 1), '°C')
-        pert  <- trimws(pert  %||% '')
-        ptype <- tolower(trimws(ptype %||% ''))
-        show  <- nzchar(pert) &&
-                 !tolower(pert) %in% c('none', 'na', '') &&
-                 !ptype %in% c('temperature', 'none', '') &&
-                 is.na(suppressWarnings(as.numeric(pert)))  # skip bare numbers
-        if (show) lab <- paste0(lab, ' + ', pert)
-        lab
-      }
-      label_map <- setNames(
-        mapply(.mk_label,
-               filtered$species, filtered$temperature_c,
-               filtered$perturbation_type %||% '', filtered$perturbation %||% ''),
-        filtered$dataset_id
-      )
+    # Build human-readable labels (main thread: uses filtered metadata).
+    .mk_label <- function(sp, tc, ptype, pert) {
+      lab   <- paste0(if (nzchar(sp %||% '')) sp else '?', ' ', round(tc, 1), '°C')
+      pert  <- trimws(pert  %||% '')
+      ptype <- tolower(trimws(ptype %||% ''))
+      show  <- nzchar(pert) &&
+               !tolower(pert) %in% c('none', 'na', '') &&
+               !ptype %in% c('temperature', 'none', '') &&
+               is.na(suppressWarnings(as.numeric(pert)))
+      if (show) lab <- paste0(lab, ' + ', pert)
+      lab
+    }
+    label_map <- setNames(
+      mapply(.mk_label,
+             filtered$species, filtered$temperature_c,
+             filtered$perturbation_type %||% '', filtered$perturbation %||% ''),
+      filtered$dataset_id
+    )
 
-      all_raw    <- list()
-      all_metrics <- lapply(seq_len(nrow(filtered)), function(i) {
-        did   <- filtered$dataset_id[i]
-        tc    <- filtered$temperature_c[i]
-        label <- label_map[[did]]
-        setProgress(i / nrow(filtered), detail = paste('Processing', label, '…'))
+    # Read all raw parquet files on main thread (needs DB + memoised file read).
+    all_raw <- lapply(filtered$dataset_id, function(did) {
+      raw <- tryCatch(qres_get_raw_curves(con, did), error = function(e) NULL)
+      if (is.null(raw)) return(NULL)
+      raw$temperature_c <- filtered$temperature_c[filtered$dataset_id == did][1]
+      raw$plot_label    <- label_map[[did]]
+      raw
+    })
+    names(all_raw) <- filtered$dataset_id
 
-        raw <- tryCatch(qres_get_raw_curves(con, did), error = function(e) NULL)
+    # Freeze copies for the worker (no reactive access inside future).
+    .filtered  <- filtered
+    .label_map <- label_map
+    .all_raw   <- all_raw
+    .tools     <- tools_selected
+
+    # Heavy fitting runs in a background worker — UI stays live.
+    future_promise({
+      all_metrics <- lapply(seq_len(nrow(.filtered)), function(i) {
+        did   <- .filtered$dataset_id[i]
+        raw   <- .all_raw[[did]]
         if (is.null(raw)) return(NULL)
-
-        raw$temperature_c <- tc
-        raw$plot_label    <- label
-        all_raw[[did]] <<- raw
-
-        cmp <- qres_compare_plugin_outputs(raw, plugins = input$comp_tools)
-        if (nrow(cmp) > 0) {
-          cmp$temperature_c <- tc
-          cmp$dataset_id    <- cmp$dataset_id %||% did
-          cmp$plot_label    <- label
+        cmp <- tryCatch(
+          qres_compare_plugin_outputs(raw, plugins = .tools),
+          error = function(e) NULL
+        )
+        if (!is.null(cmp) && nrow(cmp) > 0) {
+          cmp$temperature_c <- .filtered$temperature_c[i]
+          cmp$dataset_id    <- did
+          cmp$plot_label    <- .label_map[[did]]
         }
         cmp
       })
-
-      combined <- dplyr::bind_rows(Filter(Negate(is.null), all_metrics))
-      comparison_result(combined)
-      comp_raw_long(dplyr::bind_rows(all_raw))
-
-      output$comp_status <- renderText(
-        paste('Done.', nrow(combined), 'metric rows across',
-              length(unique(combined$dataset_id)), 'datasets.')
+      list(
+        metrics = dplyr::bind_rows(Filter(Negate(is.null), all_metrics)),
+        raws    = dplyr::bind_rows(Filter(Negate(is.null), .all_raw))
       )
-
-      avail_tools <- unique(combined$tool)
+    }) %...>% (function(result) {
+      comparison_result(result$metrics)
+      comp_raw_long(result$raws)
+      comp_show_email(TRUE)
+      n_m <- nrow(result$metrics); n_d <- length(unique(result$metrics$dataset_id))
+      comp_status_msg(paste0(
+        '✓ Done — ', n_m, ' metric rows across ', n_d, ' dataset(s).'
+      ))
+      avail_tools <- unique(result$metrics$tool)
       updateSelectInput(session, 'scatter_x', choices = avail_tools, selected = avail_tools[1])
       updateSelectInput(session, 'scatter_y', choices = avail_tools,
                         selected = avail_tools[min(2, length(avail_tools))])
+    }) %...!% (function(e) {
+      comp_status_msg(paste0('⚠ Error: ', conditionMessage(e)))
     })
+
+    NULL  # return immediately; computation continues in the background
   })
 
   output$comp_boxplot <- renderPlot({
@@ -1979,7 +2037,7 @@ server <- function(input, output, session) {
     qres_plot_metric_comparison(df, metric = input$comp_metric,
                                  facet_by = if (length(unique(df[[facet_col]])) > 1)
                                    facet_col else NULL)
-  })
+  }) |> bindCache(comparison_result(), input$comp_metric)
 
   output$comp_curves_panel <- renderUI({
     raw <- comp_raw_long()
@@ -1997,9 +2055,9 @@ server <- function(input, output, session) {
     qres_plot_growth(raw, log_y = input$comp_log_y %||% FALSE,
                      colour_by = colour_col,
                      title = NULL)
-  })
+  }) |> bindCache(comp_raw_long(), input$comp_log_y)
 
-  output$comp_table <- renderDT({
+  output$comp_table <- renderDT(server = TRUE, {
     req(nrow(comparison_result()) > 0)
     df  <- comparison_result()
     hide <- which(names(df) %in% c('dataset_id', 'model_name')) - 1L
@@ -2014,6 +2072,51 @@ server <- function(input, output, session) {
                             tool_x = input$scatter_x,
                             tool_y = input$scatter_y,
                             metric = input$comp_metric)
+  }) |> bindCache(comparison_result(), input$scatter_x, input$scatter_y, input$comp_metric)
+
+  # ── Email comparison results ─────────────────────────────────────────────────
+  comp_email_status <- reactiveVal('')
+  output$comp_email_status <- renderText(comp_email_status())
+
+  observeEvent(input$send_comp_email, {
+    addr <- trimws(input$comp_email_addr %||% '')
+    if (!nzchar(addr)) { comp_email_status('Enter an email address first.'); return() }
+    df  <- comparison_result()
+    raw <- comp_raw_long()
+    if (is.null(df) || nrow(df) == 0) { comp_email_status('No results to send.'); return() }
+
+    comp_email_status('Sending…')
+
+    tryCatch({
+      box_png    <- tempfile(fileext = '.png')
+      curves_png <- tempfile(fileext = '.png')
+      csv_path   <- tempfile(fileext = '.csv')
+      facet_col  <- if ('plot_label' %in% names(df)) 'plot_label' else 'dataset_id'
+      ggplot2::ggsave(box_png, plot =
+        qres_plot_metric_comparison(df, metric = input$comp_metric,
+          facet_by = if (length(unique(df[[facet_col]])) > 1) facet_col else NULL),
+        width = 8, height = 5, dpi = 120)
+      if (!is.null(raw) && nrow(raw) > 0) {
+        colour_col <- if ('plot_label' %in% names(raw)) 'plot_label' else 'dataset_id'
+        ggplot2::ggsave(curves_png, plot =
+          qres_plot_growth(raw, log_y = FALSE, colour_by = colour_col),
+          width = 8, height = 5, dpi = 120)
+      } else {
+        curves_png <- NULL
+      }
+      write.csv(df, csv_path, row.names = FALSE)
+
+      attachments <- Filter(Negate(is.null), list(box_png, curves_png, csv_path))
+      phamig_send_comparison_email(
+        to          = addr,
+        metric      = input$comp_metric,
+        n_datasets  = length(unique(df$dataset_id)),
+        attachments = attachments
+      )
+      comp_email_status(paste0('Sent to ', addr, '.'))
+    }, error = function(e) {
+      comp_email_status(paste0('Failed: ', conditionMessage(e)))
+    })
   })
 
   # ── Metadata template generator ────────────────────────────────────────────
@@ -3229,7 +3332,7 @@ server <- function(input, output, session) {
       ggplot2::annotate('text', x = .5, y = .5, size = 5, colour = 'grey50',
                         label = 'Run a query to populate the comparison plot.') +
       ggplot2::theme_void()
-  })
+  }) |> bindCache(nl_active_ids(), input$nl_metric_select, input$nl_comp_tools)
 
   output$nl_curves_panel <- renderUI({
     ids <- nl_active_ids()

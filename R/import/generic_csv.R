@@ -94,12 +94,16 @@ qres_get_raw_curves <- function(con, dataset_id) {
   if (nrow(reg) == 0)
     stop('No raw measurements registered for dataset_id: "', dataset_id, '".',
          '\n  Click "Initialize / refresh DB" or upload the raw CSV first.')
-  path <- reg$path[1]
+  .read_raw_file(reg$path[1])
+}
+
+# In-session memoised file reader — parquet files are immutable once written.
+.read_raw_file <- memoise::memoise(function(path) {
   if (grepl('\\.parquet$', path) && requireNamespace('arrow', quietly = TRUE)) {
     as.data.frame(arrow::read_parquet(path))
   } else {
     as.data.frame(data.table::fread(path))
   }
-}
+})
 
 qres_read_raw_measurements <- qres_get_raw_curves

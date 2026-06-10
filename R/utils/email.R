@@ -21,6 +21,49 @@ PHAMIG_SMTP_CREDS   <- path.expand(
   Sys.getenv('PHAMIG_SMTP_CREDS', unset = '~/.phamig_smtp_creds')
 )
 
+phamig_send_comparison_email <- function(to, metric, n_datasets,
+                                          attachments = list(),
+                                          timestamp   = format(Sys.time(), '%Y-%m-%d %H:%M:%S')) {
+  if (!requireNamespace('blastula', quietly = TRUE)) {
+    warning('[email] blastula not installed — skipping.', call. = FALSE)
+    return(invisible(FALSE))
+  }
+  if (!file.exists(PHAMIG_SMTP_CREDS)) {
+    warning('[email] SMTP credentials not found at ', PHAMIG_SMTP_CREDS, call. = FALSE)
+    return(invisible(FALSE))
+  }
+
+  body <- paste0(
+    '## PhaMiG — Comparison Results\n\n',
+    '**Metric:** ', metric, '  \n',
+    '**Datasets:** ', n_datasets, '  \n',
+    '**Generated:** ', timestamp, '  \n\n',
+    'Plots (PNG) and the metrics table (CSV) are attached.\n\n',
+    '---\n*Sent by PhaMiG · Phenotypic Analysis of Microbial Growth*\n'
+  )
+
+  tryCatch({
+    email <- blastula::compose_email(body = blastula::md(body))
+    for (path in attachments) {
+      if (!is.null(path) && file.exists(path))
+        email <- blastula::add_attachment(email, file = path)
+    }
+    blastula::smtp_send(
+      email       = email,
+      to          = to,
+      from        = PHAMIG_ADMIN_EMAIL,
+      subject     = paste0('[PhaMiG] Comparison results — ', metric,
+                           ' (', n_datasets, ' datasets, ', timestamp, ')'),
+      credentials = blastula::creds_file(PHAMIG_SMTP_CREDS)
+    )
+    message('[email] Comparison results sent to ', to)
+    invisible(TRUE)
+  }, error = function(e) {
+    warning('[email] Failed: ', conditionMessage(e), call. = FALSE)
+    invisible(FALSE)
+  })
+}
+
 phamig_notify_note <- function(note_id, note_type, note_text,
                                 author    = '',
                                 timestamp = format(Sys.time(), '%Y-%m-%d %H:%M:%S')) {
