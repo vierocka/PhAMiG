@@ -1,3 +1,38 @@
+# Baseline correction applied to raw_long before plotting or fitting.
+# method: 'none' | 'min_well' | 'first_3' | 'blank_wells'
+# blank_ids: well_ids with is_blank=TRUE (needed for 'blank_wells' only)
+#
+# References:
+#   Sprouffske & Wagner (2012) doi:10.1111/j.1558-5646.2012.01583.x  — min per well
+#   Hall et al. (2014) doi:10.1093/molbev/msu069                     — first N timepoints
+#   Mira et al. (2022) / gcplyr blank parameter                      — blank wells
+.apply_baseline <- function(raw_long, method = 'none', blank_ids = character(0)) {
+  if (is.null(method) || method == 'none') return(raw_long)
+  requireNamespace('dplyr')
+  if (method == 'min_well') {
+    raw_long <- raw_long |>
+      dplyr::group_by(well_id) |>
+      dplyr::mutate(value = value - min(value, na.rm = TRUE)) |>
+      dplyr::ungroup()
+  } else if (method == 'first_3') {
+    raw_long <- raw_long |>
+      dplyr::group_by(well_id) |>
+      dplyr::arrange(time_h) |>
+      dplyr::mutate(value = value - mean(utils::head(value, 3), na.rm = TRUE)) |>
+      dplyr::ungroup()
+  } else if (method == 'blank_wells' && length(blank_ids) > 0) {
+    blank_mean <- raw_long |>
+      dplyr::filter(well_id %in% blank_ids) |>
+      dplyr::group_by(time_h) |>
+      dplyr::summarise(blank_val = mean(value, na.rm = TRUE), .groups = 'drop')
+    raw_long <- raw_long |>
+      dplyr::left_join(blank_mean, by = 'time_h') |>
+      dplyr::mutate(value = value - dplyr::coalesce(blank_val, 0)) |>
+      dplyr::select(-blank_val)
+  }
+  raw_long
+}
+
 qres_plot_growth <- function(raw_long, log_y = FALSE, colour_by = 'well',
                               title = NULL) {
   requireNamespace('ggplot2')

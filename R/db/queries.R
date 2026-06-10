@@ -189,3 +189,14 @@ qres_get_temp_range <- function(con) {
   res <- DBI::dbGetQuery(con, "SELECT MIN(temperature_c) AS tmin, MAX(temperature_c) AS tmax FROM plate")
   c(res$tmin, res$tmax)
 }
+
+# Returns well_ids flagged as blanks for the given dataset(s).
+qres_get_blank_wells <- function(con, dataset_ids) {
+  if (length(dataset_ids) == 0) return(character(0))
+  placeholders <- paste(rep('?', length(dataset_ids)), collapse = ', ')
+  res <- DBI::dbGetQuery(con,
+    sprintf('SELECT well_id FROM well_metadata WHERE dataset_id IN (%s) AND is_blank = TRUE',
+            placeholders),
+    params = as.list(dataset_ids))
+  res$well_id
+}

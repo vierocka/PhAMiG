@@ -678,6 +678,25 @@ ui_analyse <- fluidPage(
                        'auc_trapezoid', 'max_od', 'delta_od', 'asymptote_od',
                        'max_death_rate'),
           selected = 'doubling_time_h'),
+        hr(),
+        tags$div(
+          tags$b('Baseline subtraction'),
+          tip(paste(
+            'Sprouffske & Wagner (2012): subtract per-well minimum OD.',
+            'Hall et al. (2014): subtract mean of first 3 timepoints.',
+            'Mira et al. (2022) / gcplyr: subtract per-timepoint mean of designated blank wells.',
+            'Applied to raw data before fitting AND display — improves cross-dataset comparability.'
+          ))
+        ),
+        radioButtons('comp_baseline', NULL, inline = TRUE,
+          choices = c(
+            'None'              = 'none',
+            'Min per well'      = 'min_well',
+            'First 3 tp'        = 'first_3',
+            'Blank wells'       = 'blank_wells'
+          ),
+          selected = 'none'),
+        uiOutput('comp_blank_note'),
         actionButton('run_comparison', 'Run comparison', width = '100%',
                      class = 'btn-success'),
         br(), br(),
@@ -1321,8 +1340,9 @@ server <- function(input, output, session) {
   dataset_results   <- reactiveVal(data.frame())
   comparison_result <- reactiveVal(data.frame())
   comp_raw_long     <- reactiveVal(NULL)
-  comp_status_msg   <- reactiveVal('')
-  comp_show_email   <- reactiveVal(FALSE)
+  comp_status_msg    <- reactiveVal('')
+  comp_show_email    <- reactiveVal(FALSE)
+  comp_last_datasets <- reactiveVal(character(0))  # dataset_ids from last run
 
   # ── Auto-load on startup — show existing DB data without clicking Initialize
   session$onFlushed(function() {
@@ -1950,6 +1970,7 @@ server <- function(input, output, session) {
       ' The UI stays responsive — check back or switch tabs freely.'
     ))
     comparison_result(data.frame())
+    comp_last_datasets(filtered$dataset_id)
 
     # Build human-readable labels (main thread: uses filtered metadata).
     .mk_label <- function(sp, tc, ptype, pert) {
@@ -1970,10 +1991,17 @@ server <- function(input, output, session) {
       filtered$dataset_id
     )
 
+    # Baseline correction: fetch blank wells if needed, then apply to raw data.
+    .baseline   <- input$comp_baseline %||% 'none'
+    .blank_ids  <- if (.baseline == 'blank_wells')
+      tryCatch(qres_get_blank_wells(con, filtered$dataset_id), error = function(e) character(0))
+    else character(0)
+
     # Read all raw parquet files on main thread (needs DB + memoised file read).
     all_raw <- lapply(filtered$dataset_id, function(did) {
       raw <- tryCatch(qres_get_raw_curves(con, did), error = function(e) NULL)
       if (is.null(raw)) return(NULL)
+      raw <- .apply_baseline(raw, method = .baseline, blank_ids = .blank_ids)
       raw$temperature_c <- filtered$temperature_c[filtered$dataset_id == did][1]
       raw$plot_label    <- label_map[[did]]
       raw
@@ -2076,11 +2104,34 @@ server <- function(input, output, session) {
                                    facet_col else NULL)
   }) |> bindCache(comparison_result(), input$comp_metric)
 
+  output$comp_blank_note <- renderUI({
+    req(input$comp_baseline == 'blank_wells')
+    dids <- comp_last_datasets()
+    bids <- if (length(dids) > 0)
+      tryCatch(qres_get_blank_wells(con, dids), error = function(e) character(0))
+    else character(0)
+    if (length(bids) > 0)
+      tags$small(style = 'color:#27ae60;',
+        icon('check'), sprintf(' %d blank well(s) found.', length(bids)))
+    else
+      tags$small(style = 'color:#e74c3c;',
+        icon('exclamation-triangle'),
+        ' No blank wells designated in these datasets. Select a different method.')
+  })
+
   output$comp_curves_panel <- renderUI({
     raw <- comp_raw_long()
     if (is.null(raw) || nrow(raw) == 0) return(NULL)
+    baseline_used <- input$comp_baseline %||% 'none'
+    note <- if (baseline_used != 'none')
+      tags$small(style = 'color:#27ae60; margin-left:10px;',
+        icon('check'), ' Baseline corrected (', baseline_used, ') — same as used for fitting.')
+    else NULL
     tagList(
-      checkboxInput('comp_log_y', 'Log y', FALSE),
+      fluidRow(
+        column(2, checkboxInput('comp_log_y', 'Log y', FALSE)),
+        column(10, note)
+      ),
       plotOutput('comp_curves', height = '420px')
     )
   })
@@ -3462,8 +3513,29 @@ server <- function(input, output, session) {
   output$nl_curves_panel <- renderUI({
     ids <- nl_active_ids()
     if (is.null(ids) || length(ids) == 0) return(NULL)
+    blank_ids <- tryCatch(qres_get_blank_wells(con, ids), error = function(e) character(0))
+    has_blanks <- length(blank_ids) > 0
+    baseline_choices <- c('None' = 'none', 'Min per well' = 'min_well',
+                          'First 3 tp' = 'first_3', 'Blank wells' = 'blank_wells')
     tagList(
-      checkboxInput('nl_log_y', 'Log y', FALSE),
+      tags$div(
+        tags$b('Baseline subtraction', style = 'font-size:13px;'),
+        tags$small(style = 'color:dimgray; margin-left:6px;',
+          '— Sprouffske & Wagner (2012), Hall et al. (2014), gcplyr / Mira et al. (2022)'),
+        tags$br(),
+        tags$small(style = 'color:#888; font-size:11px;',
+          'Note: curves panel applies correction to display only. ',
+          'For corrected fitting, set baseline in the Analyse → Compare sidebar before running.'),
+        br(),
+        radioButtons('nl_baseline', NULL, choices = baseline_choices,
+                     selected = 'none', inline = TRUE),
+        if (!has_blanks && FALSE)   # placeholder; shown only when blank_wells selected
+          tags$small(style='color:#e74c3c;', icon('exclamation-triangle'),
+                     ' No blank wells designated.')
+      ),
+      fluidRow(
+        column(2, checkboxInput('nl_log_y', 'Log y', FALSE))
+      ),
       plotOutput('nl_curves_plot', height = '420px')
     )
   })
@@ -3500,6 +3572,13 @@ server <- function(input, output, session) {
     })
     combined <- dplyr::bind_rows(Filter(Negate(is.null), raw_list))
     if (nrow(combined) == 0) return(NULL)
+
+    # Apply display baseline correction
+    nl_bmethod  <- input$nl_baseline %||% 'none'
+    nl_bids     <- if (nl_bmethod == 'blank_wells')
+      tryCatch(qres_get_blank_wells(con, ids), error = function(e) character(0))
+    else character(0)
+    combined <- .apply_baseline(combined, method = nl_bmethod, blank_ids = nl_bids)
 
     colour_col <- if ('plot_label' %in% names(combined)) 'plot_label' else 'dataset_id'
     qres_plot_growth(combined, log_y = input$nl_log_y %||% FALSE,
