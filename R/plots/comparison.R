@@ -9,8 +9,7 @@ QRES_KEY_METRICS <- c('mumax_percapita', 'lag_time_h', 'doubling_time_h', 'auc_t
   gcplyr      = 'gcplyr',
   growthrates = 'growthrates',
   dgrothr     = 'DGrowthR',
-  kinbiont    = 'KinBiont',
-  omniplate   = 'omniplate'
+  kinbiont    = 'KinBiont'
 )
 
 .relabel_tools <- function(df) {

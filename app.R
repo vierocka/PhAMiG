@@ -34,7 +34,6 @@ source('R/plugins/gcplyr.R')
 source('R/plugins/growthrates.R')
 source('R/plugins/dgrothr.R')
 source('R/plugins/kinbiont.R')
-source('R/plugins/omniplate.R')
 source('R/plugins/registry.R')
 
 source('R/plots/growth_curves.R')
@@ -543,9 +542,9 @@ ui_search <- fluidPage(
       tags$hr(),
       h5('Single-dataset analysis'),
       selectInput('plugin',
-        tagList('Plugin', tip('model_free: fast, no model assumptions. gcplyr/growthrates: standard R packages. DGrowthR: Gaussian process. KinBiont.jl: Julia (needs Julia 1.11+). omniplate: Python via reticulate (needs conda env omniplate_env).')),
+        tagList('Plugin', tip('model_free: fast, no model assumptions. gcplyr/growthrates: standard R packages. DGrowthR: Gaussian process. KinBiont.jl: Julia (needs Julia 1.11+).')),
         choices = c('model_free', 'gcplyr', 'growthrates',
-                    'DGrowthR' = 'dgrothr', 'KinBiont' = 'kinbiont', 'omniplate')),
+                    'DGrowthR' = 'dgrothr', 'KinBiont' = 'kinbiont')),
       conditionalPanel("input.plugin == 'kinbiont'",
         tags$small(
           icon('circle-info'), ' KinBiont.jl: log-linear growth modelling in Julia.',
@@ -669,7 +668,7 @@ ui_analyse <- fluidPage(
         h5('Tools to compare'),
         checkboxGroupInput('comp_tools', NULL,
           choices  = c('model_free', 'gcplyr', 'growthrates',
-                       'DGrowthR' = 'dgrothr', 'KinBiont' = 'kinbiont', 'omniplate'),
+                       'DGrowthR' = 'dgrothr', 'KinBiont' = 'kinbiont'),
           selected = c('model_free', 'gcplyr', 'growthrates')),
         tags$small(style = 'color: dimgray;',
           icon('hourglass-half'), ' DGrowthR (GP) and KinBiont (Julia) take 30 s–3 min per dataset.'),
@@ -766,6 +765,9 @@ ui_ask <- fluidPage(
       br(),
       uiOutput('nl_selection_hint'),
       DTOutput('nl_table')),
+    tabPanel('Growth curves',
+      br(),
+      uiOutput('nl_curves_panel')),
     tabPanel('Comparison plot',
       br(),
       tags$div(
@@ -789,7 +791,7 @@ ui_ask <- fluidPage(
         column(8,
           checkboxGroupInput('nl_comp_tools', 'Tools',
             choices  = c('model_free', 'gcplyr', 'growthrates',
-                         'DGrowthR' = 'dgrothr', 'KinBiont' = 'kinbiont', 'omniplate'),
+                         'DGrowthR' = 'dgrothr', 'KinBiont' = 'kinbiont'),
             selected = c('model_free', 'gcplyr', 'growthrates'),
             inline   = TRUE),
           tags$small(style = 'color: dimgray;',
@@ -805,10 +807,7 @@ ui_ask <- fluidPage(
         )
       ),
       br(),
-      withSpinner(DT::DTOutput('nl_comp_table'), type = 6, color = '#5b9bd5')),
-    tabPanel('Growth curves',
-      br(),
-      uiOutput('nl_curves_panel'))
+      withSpinner(DT::DTOutput('nl_comp_table'), type = 6, color = '#5b9bd5'))
   ),
   bottom_nav
 )
@@ -1977,7 +1976,7 @@ server <- function(input, output, session) {
 
     # Estimate wall-clock time so the user knows what to expect.
     .secs_per_tool <- c(model_free = 1, gcplyr = 2, growthrates = 3,
-                        omniplate = 30, dgrothr = 45, kinbiont = 120)
+                        dgrothr = 45, kinbiont = 120)
     tools_selected <- input$comp_tools
     total_sec <- nrow(filtered) *
       sum(.secs_per_tool[intersect(tools_selected, names(.secs_per_tool))], na.rm = TRUE)
@@ -2036,41 +2035,14 @@ server <- function(input, output, session) {
     .all_raw   <- all_raw
     .tools     <- tools_selected
 
-    # Python plugins (reticulate) cannot be initialised inside a multisession
-    # worker — run them synchronously on the main thread first.
-    .python_plugins <- intersect(.tools, 'omniplate')
-    .r_plugins      <- setdiff(.tools, .python_plugins)
-
-    .py_metrics_df <- if (length(.python_plugins) > 0) {
-      py_rows <- lapply(seq_len(nrow(.filtered)), function(i) {
-        did <- .filtered$dataset_id[i]
-        raw <- .all_raw[[did]]
-        if (is.null(raw)) return(NULL)
-        lapply(.python_plugins, function(p) {
-          res <- tryCatch(qres_run_plugin(raw, p), error = function(e) NULL)
-          if (!is.null(res) && !is.null(res$derived_metrics) &&
-              nrow(res$derived_metrics) > 0) {
-            cmp <- dplyr::mutate(res$derived_metrics, tool = p)
-            cmp$temperature_c <- .filtered$temperature_c[i]
-            cmp$dataset_id    <- did
-            cmp$plot_label    <- .label_map[[did]]
-            cmp
-          } else NULL
-        })
-      })
-      dplyr::bind_rows(Filter(Negate(is.null), unlist(py_rows, recursive = FALSE)))
-    } else {
-      data.frame()
-    }
-
-    # R plugins run in a background worker — UI stays live.
+    # All selected plugins run in a background worker — UI stays live.
     future_promise({
       all_metrics <- lapply(seq_len(nrow(.filtered)), function(i) {
         did   <- .filtered$dataset_id[i]
         raw   <- .all_raw[[did]]
         if (is.null(raw)) return(NULL)
         cmp <- tryCatch(
-          qres_compare_plugin_outputs(raw, plugins = .r_plugins),
+          qres_compare_plugin_outputs(raw, plugins = .tools),
           error = function(e) NULL
         )
         if (!is.null(cmp) && nrow(cmp) > 0) {
@@ -2085,7 +2057,7 @@ server <- function(input, output, session) {
         raws    = dplyr::bind_rows(Filter(Negate(is.null), .all_raw))
       )
     }) %...>% (function(result) {
-      all_metrics <- dplyr::bind_rows(result$metrics, .py_metrics_df)
+      all_metrics <- result$metrics
       comparison_result(all_metrics)
       comp_raw_long(result$raws)
       comp_show_email(TRUE)
@@ -3503,32 +3475,15 @@ server <- function(input, output, session) {
       lab
     }
 
-    nl_tools      <- input$nl_comp_tools %||% c('model_free', 'gcplyr', 'growthrates')
-    nl_py_plugins <- intersect(nl_tools, 'omniplate')
-    nl_r_plugins  <- setdiff(nl_tools, nl_py_plugins)
+    nl_tools <- input$nl_comp_tools %||% c('model_free', 'gcplyr', 'growthrates')
 
     all_cmp <- lapply(ids, function(did) {
       raw <- tryCatch(qres_get_raw_curves(con, did), error = function(e) NULL)
       if (is.null(raw)) return(NULL)
       raw <- .apply_baseline(raw, method = nl_bm, blank_ids = nl_blank_ids)
       cmp <- tryCatch(
-        qres_compare_plugin_outputs(raw, plugins = nl_r_plugins),
+        qres_compare_plugin_outputs(raw, plugins = nl_tools),
         error = function(e) NULL)
-      if (length(nl_py_plugins) > 0) {
-        py_cmp <- tryCatch({
-          r <- qres_run_plugin(raw, 'omniplate')
-          if (!is.null(r$derived_metrics) && nrow(r$derived_metrics) > 0) {
-            dplyr::mutate(r$derived_metrics, tool = 'omniplate')
-          } else {
-            message('[NL omniplate] ', did, ': ', r$logs$message %||% 'no metrics returned')
-            NULL
-          }
-        }, error = function(e) {
-          message('[NL omniplate] ', did, ': ', conditionMessage(e))
-          NULL
-        })
-        cmp <- dplyr::bind_rows(cmp, py_cmp)
-      }
       if (!is.null(cmp) && nrow(cmp) > 0) {
         cmp$dataset_id <- did
         cmp$plot_label <- .nl_label(did)

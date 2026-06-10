@@ -37,6 +37,10 @@ qres_plot_growth <- function(raw_long, log_y = FALSE, colour_by = 'well',
                               title = NULL) {
   requireNamespace('ggplot2')
 
+  # Drop non-positive values before log transform to avoid -Inf warnings.
+  if (isTRUE(log_y))
+    raw_long <- raw_long[is.finite(raw_long$value) & raw_long$value > 0, ]
+
   multi_dataset <- colour_by != 'well' && colour_by %in% names(raw_long) &&
                    length(unique(raw_long[[colour_by]])) > 1
 

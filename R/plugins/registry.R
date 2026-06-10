@@ -36,24 +36,22 @@
 }
 
 QRES_PLUGINS <- data.frame(
-  plugin      = c('model_free', 'gcplyr', 'growthrates', 'dgrothr', 'kinbiont', 'omniplate'),
-  label       = c('Model-free (baseline)', 'gcplyr', 'growthrates', 'DGrowthR', 'KinBiont.jl', 'omniplate'),
-  language    = c('R', 'R', 'R', 'R', 'Julia', 'Python'),
+  plugin      = c('model_free', 'gcplyr', 'growthrates', 'dgrothr', 'kinbiont'),
+  label       = c('Model-free (baseline)', 'gcplyr', 'growthrates', 'DGrowthR', 'KinBiont.jl'),
+  language    = c('R', 'R', 'R', 'R', 'Julia'),
   url         = c(
     NA_character_,
     'https://github.com/melinabajramovic/gcplyr',
     'https://github.com/tpetzoldt/growthrates',
     'https://bio-datascience.github.io/DGrowthR/',
-    'https://github.com/pinheiroGroup/Kinbiont.jl',
-    'https://github.com/naef-lab/omniplate'
+    'https://github.com/pinheiroGroup/Kinbiont.jl'
   ),
   citation    = c(
     'Qres DB built-in',
     'Blazanin M (2023). doi:10.1093/g3journal/jkad261',
     'Petzoldt T (2022). CRAN:growthrates',
     'Feldl M & Olayo-Alarcon R. DGrowthR. bio-datascience.github.io/DGrowthR/',
-    'Pinheiro group. Kinbiont.jl',
-    'naef-lab/omniplate'
+    'Pinheiro group. Kinbiont.jl'
   ),
   stringsAsFactors = FALSE
 )
@@ -98,9 +96,8 @@ qres_run_plugin <- function(raw_long, plugin, params = list(), metadata = NULL) 
     growthrates = qres_plugin_growthrates,
     dgrothr     = qres_plugin_dgrothr,
     kinbiont    = qres_plugin_kinbiont,
-    omniplate   = qres_plugin_omniplate,
     stop('Unknown plugin: ', plugin,
-         '. Choose from: model_free, gcplyr, growthrates, dgrothr, kinbiont, omniplate')
+         '. Choose from: model_free, gcplyr, growthrates, dgrothr, kinbiont')
   )
   fn(raw_long, metadata = metadata, params = params)
 }

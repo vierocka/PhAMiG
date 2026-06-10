@@ -44,10 +44,9 @@ QRES_SCHEMA_CONTEXT <- '
   qres_compare_plugin_outputs(raw_long, plugins) → metrics data frame
   qres_get_raw_curves(con, dataset_id) → long-format OD time series
 
-  Available plugin names: model_free, gcplyr, growthrates, dgrothr, kinbiont, omniplate
+  Available plugin names: model_free, gcplyr, growthrates, dgrothr, kinbiont
   dgrothr = DGrowthR (Gaussian Process Regression; needs remotes::install_github("bio-datascience/DGrowthR"))
   kinbiont = KinBiont.jl (needs JuliaCall + Julia)
-  omniplate = Python (needs reticulate)
 '
 
 QRES_EXAMPLE_QUERIES <- '
