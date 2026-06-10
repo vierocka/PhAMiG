@@ -682,8 +682,7 @@ ui_analyse <- fluidPage(
           br(), plotOutput('comp_boxplot', height = '420px')),
         tabPanel('Growth curves (overlay)',
           br(),
-          checkboxInput('comp_log_y', 'Log y', FALSE),
-          plotOutput('comp_curves', height = '420px')),
+          uiOutput('comp_curves_panel')),
         tabPanel('Metrics table',
           br(), DTOutput('comp_table')),
         tabPanel('Pairwise scatter',
@@ -746,8 +745,7 @@ ui_ask <- fluidPage(
       plotOutput('nl_comp_plot', height = '420px')),
     tabPanel('Growth curves',
       br(),
-      checkboxInput('nl_log_y', 'Log y', FALSE),
-      plotOutput('nl_curves_plot', height = '420px'))
+      uiOutput('nl_curves_panel'))
   ),
   bottom_nav
 )
@@ -1482,7 +1480,7 @@ server <- function(input, output, session) {
     display <- display[, intersect(col_order, names(display)), drop = FALSE]
 
     # Columns hidden by default (accessible via column visibility button)
-    hidden_idx <- which(names(display) %in% c('raw_file', 'plate_reader', 'doi')) - 1L
+    hidden_idx <- which(names(display) %in% c('dataset_id', 'raw_file', 'plate_reader', 'doi')) - 1L
 
     datatable(display,
               selection  = 'single',
@@ -1808,7 +1806,7 @@ server <- function(input, output, session) {
                    'perturbation_type', 'perturbation', 'authors', 'year',
                    'doi', 'plate_reader', 'has_raw', 'title', 'source_url')
     df <- df[, intersect(col_order, names(df)), drop = FALSE]
-    hidden_idx <- which(names(df) %in% c('title', 'source_url', 'plate_reader')) - 1L
+    hidden_idx <- which(names(df) %in% c('dataset_id', 'title', 'source_url', 'plate_reader')) - 1L
 
     datatable(df, selection = 'single', rownames = FALSE,
               extensions = 'Buttons',
@@ -1938,15 +1936,28 @@ server <- function(input, output, session) {
                                    'dataset_id' else NULL)
   })
 
+  output$comp_curves_panel <- renderUI({
+    raw <- comp_raw_long()
+    if (is.null(raw) || nrow(raw) == 0) return(NULL)
+    tagList(
+      checkboxInput('comp_log_y', 'Log y', FALSE),
+      plotOutput('comp_curves', height = '420px')
+    )
+  })
+
   output$comp_curves <- renderPlot({
     req(!is.null(comp_raw_long()))
-    qres_plot_growth(comp_raw_long(), log_y = input$comp_log_y,
+    qres_plot_growth(comp_raw_long(), log_y = input$comp_log_y %||% FALSE,
                      title = 'Filtered datasets — raw growth curves')
   })
 
   output$comp_table <- renderDT({
     req(nrow(comparison_result()) > 0)
-    datatable(comparison_result(), options = list(pageLength = 15, scrollX = TRUE))
+    df  <- comparison_result()
+    hide <- which(names(df) %in% c('dataset_id', 'model_name')) - 1L
+    datatable(df, rownames = FALSE,
+              options = list(pageLength = 15, scrollX = TRUE,
+                             columnDefs = list(list(visible = FALSE, targets = hide))))
   })
 
   output$comp_scatter <- renderPlot({
@@ -3063,36 +3074,86 @@ server <- function(input, output, session) {
     req(nl_result())
     df <- nl_result()$data
     if (is.null(df) || nrow(df) == 0) return(datatable(data.frame(message = 'No results.')))
-    # Reorder: dataset_id + raw_path first, then biological metadata
-    priority_cols <- intersect(c('dataset_id', 'raw_path', 'species', 'strain',
-                                  'medium_type', 'perturbation_type', 'perturbation',
-                                  'temperature_c', 'year', 'authors', 'doi'),
-                               names(df))
-    other_cols    <- setdiff(names(df), priority_cols)
-    df <- df[, c(priority_cols, other_cols), drop = FALSE]
-    datatable(df, options = list(pageLength = 20, scrollX = TRUE))
+    display_cols <- intersect(c('species', 'strain', 'medium_type', 'perturbation_type',
+                                 'perturbation', 'temperature_c', 'year', 'authors', 'doi'),
+                              names(df))
+    datatable(df[, display_cols, drop = FALSE],
+              rownames = FALSE,
+              options  = list(pageLength = 20, scrollX = TRUE))
   })
 
   output$nl_comp_plot <- renderPlot({
     req(nl_result())
+    res    <- nl_result()
+    metric <- input$nl_metric_select %||% 'doubling_time_h'
+
+    # LLM-returned comparison result
+    if (res$type == 'comparison' && !is.null(res$data) && nrow(res$data) > 0) {
+      return(qres_plot_metric_comparison(res$data, metric = metric,
+               facet_by = if (length(unique(res$data$dataset_id)) > 1) 'dataset_id' else NULL))
+    }
+
+    # Rule-based table result: auto-run comparison on returned datasets (cap 5)
+    if (res$type == 'table' && !is.null(res$data) &&
+        'dataset_id' %in% names(res$data) && nrow(res$data) > 0) {
+      ids <- unique(res$data$dataset_id)
+      if ('raw_path' %in% names(res$data))
+        ids <- unique(res$data$dataset_id[!is.na(res$data$raw_path)])
+      ids <- head(ids, 5)
+      if (length(ids) == 0) {
+        return(ggplot2::ggplot() +
+          ggplot2::annotate('text', x = .5, y = .5, size = 4.5, colour = 'grey50',
+            label = 'No raw data registered for these datasets.') +
+          ggplot2::theme_void())
+      }
+      all_cmp <- lapply(ids, function(did) {
+        raw <- tryCatch(qres_get_raw_curves(con, did), error = function(e) NULL)
+        if (is.null(raw)) return(NULL)
+        cmp <- tryCatch(
+          qres_compare_plugin_outputs(raw, plugins = c('model_free', 'gcplyr', 'growthrates')),
+          error = function(e) NULL)
+        if (!is.null(cmp) && nrow(cmp) > 0) cmp$dataset_id <- did
+        cmp
+      })
+      combined <- dplyr::bind_rows(Filter(Negate(is.null), all_cmp))
+      if (nrow(combined) == 0) {
+        return(ggplot2::ggplot() +
+          ggplot2::annotate('text', x = .5, y = .5, size = 4.5, colour = 'grey50',
+            label = 'No metrics computed for these datasets.') +
+          ggplot2::theme_void())
+      }
+      return(qres_plot_metric_comparison(combined, metric = metric,
+               facet_by = if (length(unique(combined$dataset_id)) > 1) 'dataset_id' else NULL))
+    }
+
+    ggplot2::ggplot() +
+      ggplot2::annotate('text', x = .5, y = .5, size = 5, colour = 'grey50',
+                        label = 'Run a query to populate the comparison plot.') +
+      ggplot2::theme_void()
+  })
+
+  output$nl_curves_panel <- renderUI({
     res <- nl_result()
-    if (res$type != 'comparison' || is.null(res$data) || nrow(res$data) == 0) return(NULL)
-    metric <- input$nl_metric_select %||% (res$metric %||% 'doubling_time_h')
-    qres_plot_metric_comparison(res$data, metric = metric,
-                                 facet_by = if (length(unique(res$data$dataset_id)) > 1)
-                                   'dataset_id' else NULL)
+    if (is.null(res)) return(NULL)
+    has_ids <- (res$type == 'comparison' && !is.null(res$filtered)) ||
+               (res$type == 'table' && !is.null(res$data) &&
+                'dataset_id' %in% names(res$data) && nrow(res$data) > 0)
+    if (!has_ids) return(NULL)
+    tagList(
+      checkboxInput('nl_log_y', 'Log y', FALSE),
+      plotOutput('nl_curves_plot', height = '420px')
+    )
   })
 
   output$nl_curves_plot <- renderPlot({
     req(nl_result())
     res <- nl_result()
 
-    # dataset_ids to plot: from comparison$filtered OR from table$data (rule-based results)
     ids <- if (res$type == 'comparison' && !is.null(res$filtered)) {
       res$filtered$dataset_id
     } else if (res$type == 'table' && !is.null(res$data) &&
                'dataset_id' %in% names(res$data) && nrow(res$data) > 0) {
-      head(res$data$dataset_id, 8)   # cap at 8 to keep plot readable
+      head(res$data$dataset_id, 8)
     } else {
       NULL
     }
@@ -3105,8 +3166,7 @@ server <- function(input, output, session) {
     combined <- dplyr::bind_rows(Filter(Negate(is.null), raw_list))
     if (nrow(combined) == 0) return(NULL)
 
-    title <- paste0('Growth curves — ', length(ids), ' dataset(s): ',
-                    paste(ids, collapse = ', '))
+    title <- paste0('Growth curves — ', length(ids), ' dataset(s)')
     qres_plot_growth(combined, log_y = input$nl_log_y %||% FALSE, title = title)
   })
 }
