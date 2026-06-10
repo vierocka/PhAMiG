@@ -40,7 +40,8 @@ qres_hash_passphrase <- function(passphrase) {
 qres_register_embargo <- function(con, dataset_id, uploader_email, passphrase,
                                    release_mode  = c('immediate', 'date', 'biorxiv'),
                                    release_date  = NA,
-                                   biorxiv_url   = NA) {
+                                   biorxiv_url   = NA,
+                                   orcid         = NA) {
   release_mode <- match.arg(release_mode)
 
   if (nchar(trimws(passphrase %||% '')) < 8)
@@ -56,11 +57,13 @@ qres_register_embargo <- function(con, dataset_id, uploader_email, passphrase,
 
   DBI::dbExecute(con, "
     INSERT INTO upload_embargo
-      (dataset_id, uploader_email, access_key, passphrase_hash,
+      (dataset_id, uploader_email, orcid, access_key, passphrase_hash,
        release_mode, release_date, biorxiv_url, released, released_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   ", params = list(
-    dataset_id, trimws(tolower(uploader_email)), access_key, passphrase_hash,
+    dataset_id, trimws(tolower(uploader_email)),
+    if (!is.na(orcid) && nzchar(trimws(orcid %||% ''))) trimws(orcid) else NA,
+    access_key, passphrase_hash,
     release_mode,
     if (!is.na(release_date) && nzchar(release_date %||% '')) as.character(release_date) else NA,
     if (!is.na(biorxiv_url)  && nzchar(biorxiv_url  %||% '')) trimws(biorxiv_url) else NA,
@@ -127,7 +130,7 @@ qres_is_released <- function(con, dataset_id) {
 qres_my_datasets <- function(con, email) {
   DBI::dbGetQuery(con, "
     SELECT ue.dataset_id, ue.release_mode, ue.release_date, ue.biorxiv_url,
-           ue.released, ue.created_at, ue.released_at,
+           ue.released, ue.needs_correction, ue.created_at, ue.released_at,
            d.title, w.species, w.medium_type, p.temperature_c
     FROM upload_embargo ue
     LEFT JOIN dataset d USING(dataset_id)
@@ -138,4 +141,49 @@ qres_my_datasets <- function(con, email) {
     WHERE lower(ue.uploader_email) = lower(?)
     ORDER BY ue.created_at DESC
   ", params = list(trimws(email)))
+}
+
+# Flag a dataset for correction: wipes raw data + metadata but keeps the embargo
+# record so the uploader can re-upload corrected files using the same dataset_id.
+# Requires the same 4 factors as qres_delete_dataset().
+qres_reopen_dataset <- function(con, dataset_id, email, access_key, passphrase,
+                                 parquet_dir = 'data/parquet/raw_measurements') {
+  rec <- DBI::dbGetQuery(con,
+    'SELECT * FROM upload_embargo WHERE dataset_id = ?', params = list(dataset_id))
+
+  if (nrow(rec) == 0)
+    return(list(ok = FALSE,
+                message = paste0('Dataset "', dataset_id, '" not found or has no embargo record.')))
+
+  if (!identical(trimws(tolower(email)), rec$uploader_email[1]))
+    return(list(ok = FALSE, message = 'Email does not match upload record.'))
+
+  if (!identical(trimws(access_key), rec$access_key[1]))
+    return(list(ok = FALSE, message = 'Access key is incorrect.'))
+
+  if (!identical(qres_hash_passphrase(trimws(passphrase)), rec$passphrase_hash[1]))
+    return(list(ok = FALSE, message = 'Passphrase is incorrect.'))
+
+  # Remove data rows — keep upload_embargo intact
+  for (tbl in c('raw_measurement_registry', 'well_metadata', 'plate', 'dataset')) {
+    tryCatch(
+      DBI::dbExecute(con, sprintf('DELETE FROM %s WHERE dataset_id = ?', tbl),
+                     params = list(dataset_id)),
+      error = function(e) NULL
+    )
+  }
+
+  # Delete Parquet file if present
+  parquet_path <- file.path(parquet_dir, paste0(dataset_id, '.parquet'))
+  if (file.exists(parquet_path)) file.remove(parquet_path)
+
+  # Mark correction flag
+  DBI::dbExecute(con,
+    "UPDATE upload_embargo SET needs_correction = TRUE WHERE dataset_id = ?",
+    params = list(dataset_id))
+
+  message(sprintf('[reopen] %s flagged for correction by %s', dataset_id, email))
+  list(ok = TRUE,
+       message = paste0('Upload cleared for "', dataset_id,
+                        '". Go to "Upload raw data" and re-submit using the same dataset ID.'))
 }

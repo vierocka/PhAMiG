@@ -1,0 +1,61 @@
+# PhaMiG note-submission email notifier.
+#
+# Requires the blastula package and a one-time credential setup:
+#
+#   install.packages("blastula")
+#   blastula::create_smtp_creds_file(
+#     file     = "~/.phamig_smtp_creds",
+#     user     = "viera.kovacova.ml@gmail.com",
+#     host     = "smtp.gmail.com",
+#     port     = 587,
+#     use_ssl  = TRUE
+#   )
+#   # → paste your Gmail App Password when prompted
+#   #   (create one at myaccount.google.com → Security → App Passwords)
+#
+# After setup the function works silently; if blastula is absent or the
+# creds file is missing it logs a warning and returns FALSE.
+
+PHAMIG_ADMIN_EMAIL  <- "viera.kovacova.ml@gmail.com"
+PHAMIG_SMTP_CREDS   <- path.expand("~/.phamig_smtp_creds")
+
+phamig_notify_note <- function(note_id, note_type, note_text,
+                                author    = '',
+                                timestamp = format(Sys.time(), '%Y-%m-%d %H:%M:%S')) {
+  if (!requireNamespace('blastula', quietly = TRUE)) {
+    warning('[email] blastula not installed — skipping notification.',
+            '\nRun: install.packages("blastula")', call. = FALSE)
+    return(invisible(FALSE))
+  }
+  if (!file.exists(PHAMIG_SMTP_CREDS)) {
+    warning('[email] SMTP credentials not found at ', PHAMIG_SMTP_CREDS,
+            '\nSee R/utils/email.R for setup instructions.', call. = FALSE)
+    return(invisible(FALSE))
+  }
+
+  body <- paste0(
+    'A new note has been submitted to PhaMiG.\n\n',
+    'ID:        ', note_id,    '\n',
+    'Type:      ', note_type,  '\n',
+    'Author:    ', if (nzchar(trimws(author))) author else '(anonymous)', '\n',
+    'Timestamp: ', timestamp,  '\n\n',
+    '--- Note text ---\n',
+    note_text, '\n'
+  )
+
+  tryCatch({
+    email <- blastula::compose_email(body = blastula::md(body))
+    blastula::smtp_send(
+      email       = email,
+      to          = PHAMIG_ADMIN_EMAIL,
+      from        = PHAMIG_ADMIN_EMAIL,
+      subject     = paste0('[PhaMiG] New ', note_type, ' note — ', note_id),
+      credentials = blastula::creds_file(PHAMIG_SMTP_CREDS)
+    )
+    message('[email] Notification sent for ', note_id)
+    invisible(TRUE)
+  }, error = function(e) {
+    warning('[email] Failed to send notification: ', conditionMessage(e), call. = FALSE)
+    invisible(FALSE)
+  })
+}

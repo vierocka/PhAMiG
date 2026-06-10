@@ -24,6 +24,8 @@ qres_init_schema <- function(con) {
       plate_id          TEXT PRIMARY KEY,
       dataset_id        TEXT NOT NULL,
       plate_format      TEXT,
+      plate_colour      TEXT,
+      lid               BOOLEAN,
       plate_reader      TEXT,
       spectrophotometer TEXT,
       wavelength_nm     DOUBLE,
@@ -134,16 +136,18 @@ qres_init_schema <- function(con) {
   # released:     FALSE until mode condition is met; search filters hide FALSE rows
   DBI::dbExecute(con, "
     CREATE TABLE IF NOT EXISTS upload_embargo (
-      dataset_id       TEXT PRIMARY KEY,
-      uploader_email   TEXT NOT NULL,
-      access_key       TEXT NOT NULL,
-      passphrase_hash  TEXT NOT NULL,
-      release_mode     TEXT NOT NULL DEFAULT 'immediate',
-      release_date     DATE,
-      biorxiv_url      TEXT,
-      released         BOOLEAN NOT NULL DEFAULT FALSE,
-      created_at       TIMESTAMP DEFAULT current_timestamp,
-      released_at      TIMESTAMP
+      dataset_id        TEXT PRIMARY KEY,
+      uploader_email    TEXT NOT NULL,
+      orcid             TEXT,
+      access_key        TEXT NOT NULL,
+      passphrase_hash   TEXT NOT NULL,
+      release_mode      TEXT NOT NULL DEFAULT 'immediate',
+      release_date      DATE,
+      biorxiv_url       TEXT,
+      released          BOOLEAN NOT NULL DEFAULT FALSE,
+      needs_correction  BOOLEAN NOT NULL DEFAULT FALSE,
+      created_at        TIMESTAMP DEFAULT current_timestamp,
+      released_at       TIMESTAMP
     )
   ")
 
@@ -166,6 +170,14 @@ qres_migrate_schema <- function(con) {
   tryCatch(DBI::dbExecute(con, "ALTER TABLE dataset ADD COLUMN IF NOT EXISTS notes TEXT"),
            error = function(e) NULL)
   tryCatch(DBI::dbExecute(con, "ALTER TABLE plate ADD COLUMN IF NOT EXISTS shake_freq_rpm DOUBLE"),
+           error = function(e) NULL)
+  tryCatch(DBI::dbExecute(con, "ALTER TABLE plate ADD COLUMN IF NOT EXISTS plate_colour TEXT"),
+           error = function(e) NULL)
+  tryCatch(DBI::dbExecute(con, "ALTER TABLE plate ADD COLUMN IF NOT EXISTS lid BOOLEAN"),
+           error = function(e) NULL)
+  tryCatch(DBI::dbExecute(con, "ALTER TABLE upload_embargo ADD COLUMN IF NOT EXISTS orcid TEXT"),
+           error = function(e) NULL)
+  tryCatch(DBI::dbExecute(con, "ALTER TABLE upload_embargo ADD COLUMN IF NOT EXISTS needs_correction BOOLEAN NOT NULL DEFAULT FALSE"),
            error = function(e) NULL)
   tryCatch(DBI::dbExecute(con, "ALTER TABLE processing_run ADD COLUMN IF NOT EXISTS container_hash TEXT"),
            error = function(e) NULL)

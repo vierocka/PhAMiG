@@ -501,9 +501,25 @@ ui_search <- fluidPage(
       tags$hr(),
       h5('Single-dataset analysis'),
       selectInput('plugin',
-        tagList('Plugin', tip('model_free: fast, no model assumptions. gcplyr/growthrates: standard R packages. DGrowthR: Gaussian process. KinBiont.jl: Julia (needs Julia 1.11). omniplate: Python via reticulate (needs conda env omniplate_env).')),
+        tagList('Plugin', tip('model_free: fast, no model assumptions. gcplyr/growthrates: standard R packages. DGrowthR: Gaussian process. KinBiont.jl: Julia (needs Julia 1.11+). omniplate: Python via reticulate (needs conda env omniplate_env).')),
         choices = c('model_free', 'gcplyr', 'growthrates',
                     'dgrothr', 'kinbiont', 'omniplate')),
+      conditionalPanel("input.plugin == 'kinbiont'",
+        tags$small(
+          icon('circle-info'), ' KinBiont.jl: log-linear growth modelling in Julia.',
+          tags$br(),
+          tags$a('Pinheiro et al. (2025) Nat. Commun.',
+                 href = 'https://www.nature.com/articles/s41467-025-61592-6',
+                 target = '_blank'),
+          ' | ',
+          tags$a('GitHub', href = 'https://github.com/pinheiroGroup/Kinbiont.jl',
+                 target = '_blank'),
+          ' | ',
+          tags$a('bio.tools', href = 'https://bio.tools/kinbiont', target = '_blank'),
+          tags$br(),
+          tags$em('Requires Julia 1.11+ with Kinbiont.jl installed.')
+        )
+      ),
       selectInput('correction_type',
         tagList('Blank correction', tip('none: raw OD values. blank_static: subtract mean of blank wells at time 0. blank_timewise: subtract blank curve at each time point. smooth_only: Savitzky-Golay smoothing only.')),
         choices = c('none', 'blank_static', 'blank_timewise', 'smooth_only')),
@@ -710,6 +726,20 @@ ui_submit <- fluidPage(
                      border-radius: 6px; padding: 14px; }
     .step-label { font-weight: bold; color: #1565c0; margin-top: 10px; }
     .spinner-inline { display:inline-block; margin-left:8px; }
+    .key-box { background:#f0f8ff; border:1px solid #b8d4e8;
+               border-radius:4px; padding:10px; margin-bottom:8px; font-size:13px; }
+    details.optional-section { margin: 8px 0; }
+    details.optional-section > summary {
+      cursor: pointer; font-weight: bold; color: #555;
+      padding: 4px 0; list-style: none; user-select: none;
+    }
+    details.optional-section > summary::-webkit-details-marker { display: none; }
+    details.optional-section > summary::before { content: "▶ "; font-size: 11px; }
+    details.optional-section[open] > summary::before { content: "▼ "; }
+    details.optional-section > summary span.opt-badge {
+      background: #eee; border-radius: 3px; padding: 1px 5px;
+      font-size: 11px; color: #777; margin-left: 6px; font-weight: normal;
+    }
   '))),
   fluidRow(
     column(4, img(src = 'Qres_DB_logo.png', height = '80px')),
@@ -721,23 +751,13 @@ ui_submit <- fluidPage(
     tabPanel('Upload raw data',
       br(),
       tags$div(class = 'key-box',
-        tags$strong('Unique key chain: '),
-        tags$code('dataset_id'), ' → all metadata tables → Parquet raw data → analysis results.',
+        tags$strong('Upload workflow: '),
+        '① upload raw growth file  ② optionally upload plate template  ③ add dataset metadata  ④ choose release mode  ⑤ register.',
         tags$br(),
-        tags$span(class = 'required-star', '★'), ' = required.  ',
-        tags$span(class = 'optional-label', '○ = optional.'),
-        '  Visit ', tags$strong('Metadata Preparation'), ' first to generate the plate template CSV.',
-        tags$br(),
-        tags$strong('Steps: '),
-        '① fill required fields  ② choose release mode  ③ click Register',
-        tags$hr(style = 'margin: 6px 0;'),
-        icon('file-excel'), tags$strong(' Multi-plate Excel upload: '),
-        'Raw data can also be uploaded as an ', tags$strong('.xlsx'), ' file — each sheet must follow',
-        ' the same format as the CSV template (first column ', tags$code('Time'),
-        ', remaining columns = well names ', tags$code('A1'), ' … ', tags$code('H12'), ').',
-        ' If you upload a multi-sheet Excel file, the plate template must also be an ',
-        tags$strong('.xlsx'), ' file with the ', tags$strong('same number of sheets in the same order'),
-        ': sheet 1 of the template describes the layout of sheet 1 of the raw data, sheet 2 of sheet 2, and so on.'
+        tags$small(
+          tags$span(class = 'required-star', '★'), ' required. ',
+          'For multi-plate Excel files, raw data and plate template must have matching sheets.'
+        )
       ),
       fluidRow(
         column(12,
@@ -795,80 +815,80 @@ ui_submit <- fluidPage(
               )
             ),
 
-            # Publication (optional)
-            tags$p(class = 'step-label', '○ Publication info (optional)'),
-            textInput('upload_authors',
-              opt_label('Authors',
-                'Author list as it appears in the paper. Semicolon-separated. Max 500 characters. Example: "Smith, J.; Doe, A.; Brown, C."'),
-              placeholder = 'Smith, J.; Doe, A.'),
-            fluidRow(
-              column(3, numericInput('upload_year',
-                opt_label('Year', 'Year of publication or data collection. Range 1950–2035.'),
-                value = as.integer(format(Sys.Date(), '%Y')), min = 1950, max = 2035)),
-              column(9, textInput('upload_doi',
-                opt_label('DOI', 'Digital Object Identifier. Must start with "10." Example: 10.1038/nature12345.'),
-                placeholder = '10.1234/journal.xxx'))
+            # Publication (optional, collapsible)
+            tags$details(class = 'optional-section',
+              tags$summary('Publication info', tags$span(class = 'opt-badge', 'optional')),
+              br(),
+              textInput('upload_authors',
+                opt_label('Authors', 'Semicolon-separated. Example: "Smith, J.; Doe, A."'),
+                placeholder = 'Smith, J.; Doe, A.'),
+              fluidRow(
+                column(3, numericInput('upload_year',
+                  opt_label('Year', 'Publication or collection year. Range 1950–2035.'),
+                  value = as.integer(format(Sys.Date(), '%Y')), min = 1950, max = 2035)),
+                column(9, textInput('upload_doi',
+                  opt_label('DOI', 'Must start with "10." Example: 10.1038/nature12345.'),
+                  placeholder = '10.1234/journal.xxx'))
+              )
             ),
-            textAreaInput('upload_notes',
-              opt_label('Notes', 'Free-text notes about this dataset. Max 1000 characters.'),
-              rows = 2, placeholder = 'e.g. Outlier wells removed; temperature drifted ±0.5°C'),
 
-            # Instrument & plate details (optional)
-            tags$p(class = 'step-label', '○ Instrument & plate details (optional)'),
-            fluidRow(
-              column(5,
-                textInput('upload_plate_reader',
-                  opt_label('Device / plate reader',
-                    'Brand and model of the plate reader. Example: Tecan Infinite 200 Pro, BioTek Synergy HTX.'),
-                  placeholder = 'e.g. Tecan Infinite 200 Pro')),
-              column(3,
-                numericInput('upload_wavelength',
-                  opt_label('Wavelength (nm)',
-                    'Measurement wavelength. OD600 is standard for bacterial growth; OD750 is used for cyanobacteria.'),
-                  value = 600, min = 200, max = 1000)),
-              column(4,
-                textInput('upload_spectrophotometer',
-                  opt_label('Spectrophotometer model',
-                    'If different from the plate reader field (some labs use a separate spectrophotometer for cuvette measurements).'),
-                  placeholder = 'optional'))
+            # Notes (optional, collapsible)
+            tags$details(class = 'optional-section',
+              tags$summary('Notes', tags$span(class = 'opt-badge', 'optional')),
+              br(),
+              textAreaInput('upload_notes', NULL,
+                rows = 2, placeholder = 'e.g. Outlier wells removed; temperature drifted ±0.5°C')
             ),
-            fluidRow(
-              column(6,
-                selectInput('upload_plate_colour',
-                  opt_label('Plate colour / material',
-                    'Optical properties of the plate bottom. Transparent is standard for absorbance; white increases fluorescence signal; black reduces background fluorescence.'),
-                  choices = c('transparent' = 'transparent', 'white' = 'white',
-                              'black' = 'black', 'other' = 'other'),
-                  selected = 'transparent')),
-              column(6,
-                radioButtons('upload_lid', opt_label('Lid', 'Whether a lid was used during measurement. Lids reduce evaporation but may affect OD readings in some readers.'),
-                  choices = c('Yes' = 'TRUE', 'No' = 'FALSE'), selected = 'TRUE', inline = TRUE))
-            ),
-            fluidRow(
-              column(3,
-                numericInput('upload_shake_rpm',
-                  opt_label('Shaking (rpm)', 'Orbital shaking frequency during measurement. 0 = no shaking.'),
-                  value = NA, min = 0, max = 2000)),
-              column(3,
-                selectInput('upload_time_unit',
-                  opt_label('Time unit',
-                    paste0('Only needed when the Time column contains plain numbers (e.g. 8.67). ',
-                           'Colon-separated formats are auto-detected and always converted to hours:\n',
-                           '  mm:ss        → e.g. 10:00 = 10 min\n',
-                           '  hh:mm:ss     → e.g. 1:30:00 = 1.5 h\n',
-                           '  dd:hh:mm:ss  → e.g. 0:02:30:00 = 2.5 h')),
-                  choices = c('hours' = 'h', 'minutes' = 'min', 'seconds' = 's'),
-                  selected = 'h')),
-              column(3,
-                textInput('upload_strain',
-                  opt_label('Strain',
-                    'Strain name or identifier. Used as a dataset-wide default; can be overridden per well in the plate template.'),
-                  placeholder = 'e.g. K12 NCM3722')),
-              column(3,
-                textInput('upload_taxon_id',
-                  opt_label('NCBI Taxon ID',
-                    'Numeric NCBI Taxonomy identifier. Dataset-wide default; overridable per well. Example: 562 for E. coli, 4932 for S. cerevisiae.'),
-                  placeholder = '562'))
+
+            # Instrument & plate details (optional, collapsible)
+            tags$details(class = 'optional-section',
+              tags$summary('Instrument & plate details', tags$span(class = 'opt-badge', 'optional')),
+              br(),
+              fluidRow(
+                column(5,
+                  textInput('upload_plate_reader',
+                    opt_label('Plate reader', 'Brand and model. Example: Tecan Infinite 200 Pro.'),
+                    placeholder = 'e.g. Tecan Infinite 200 Pro')),
+                column(3,
+                  numericInput('upload_wavelength',
+                    opt_label('Wavelength (nm)', 'OD600 standard; OD750 for cyanobacteria.'),
+                    value = 600, min = 200, max = 1000)),
+                column(4,
+                  textInput('upload_spectrophotometer',
+                    opt_label('Spectrophotometer', 'If different from plate reader.'),
+                    placeholder = 'optional'))
+              ),
+              fluidRow(
+                column(6,
+                  selectInput('upload_plate_colour',
+                    opt_label('Plate colour', 'Bottom material. Transparent = standard absorbance.'),
+                    choices = c('transparent' = 'transparent', 'white' = 'white',
+                                'black' = 'black', 'other' = 'other'),
+                    selected = 'transparent')),
+                column(6,
+                  radioButtons('upload_lid', opt_label('Lid', 'Lid used during measurement?'),
+                    choices = c('Yes' = 'TRUE', 'No' = 'FALSE'), selected = 'TRUE', inline = TRUE))
+              ),
+              fluidRow(
+                column(3,
+                  numericInput('upload_shake_rpm',
+                    opt_label('Shaking (rpm)', '0 = no shaking.'),
+                    value = NA, min = 0, max = 2000)),
+                column(3,
+                  selectInput('upload_time_unit',
+                    opt_label('Time unit',
+                      'Only for plain-number Time columns. Colon-separated formats (HH:MM:SS, MM:SS) are auto-detected.'),
+                    choices = c('hours' = 'h', 'minutes' = 'min', 'seconds' = 's'),
+                    selected = 'h')),
+                column(3,
+                  textInput('upload_strain',
+                    opt_label('Strain', 'Dataset-wide default; override per well in plate template.'),
+                    placeholder = 'e.g. K12 NCM3722')),
+                column(3,
+                  textInput('upload_taxon_id',
+                    opt_label('NCBI Taxon ID', 'Example: 562 (E. coli), 4932 (S. cerevisiae).'),
+                    placeholder = '562'))
+              )
             ),
 
             # STEP 3: Embargo / access control
@@ -905,34 +925,34 @@ ui_submit <- fluidPage(
               fluidRow(
                 column(6,
                   textInput('upload_email',
-                    req_label('Your email',
-                      'Needed to verify your identity for deletion. Not stored in plain text. Max 200 characters.'),
-                    placeholder = 'yourname@institution.edu'),
-                  textInput('upload_orcid',
-                    opt_label('ORCID',
-                      'Your 16-digit ORCID researcher identifier. Format: 0000-0000-0000-0000. See orcid.org. Used to link datasets to your researcher profile.'),
-                    placeholder = '0000-0000-0000-0000')
+                    req_label('Your email', 'Required for deletion. Not stored in plain text.'),
+                    placeholder = 'yourname@institution.edu')
                 ),
                 column(6,
                   passwordInput('upload_passphrase',
-                    req_label('Passphrase (≥8 characters)',
-                      'A phrase you will remember — NOT your login password. Hashed (SHA-256) before storage. Needed later to delete your dataset.'),
+                    req_label('Passphrase (≥8 chars)', 'Hashed before storage. Needed to delete your dataset.'),
                     placeholder = '≥ 8 characters'),
                   passwordInput('upload_passphrase2',
                     req_label('Confirm passphrase', 'Must match exactly.'),
                     placeholder = 'repeat your passphrase')
                 )
+              ),
+              tags$details(class = 'optional-section', style = 'margin-top:6px;',
+                tags$summary('ORCID', tags$span(class = 'opt-badge', 'optional')),
+                br(),
+                textInput('upload_orcid',
+                  opt_label('ORCID', 'Format: 0000-0000-0000-0000. Links dataset to your researcher profile.'),
+                  placeholder = '0000-0000-0000-0000')
               )
             ),
 
-            br(),
-            fluidRow(
-              column(8,
-                checkboxInput('upload_run_analysis',
-                  tagList('Run quick analysis (model_free) after upload',
-                    tip('Automatically estimates doubling time, mumax, and AUC for all wells using the model-free method. Results appear in the Analyse tab. Takes 5–30 seconds depending on plate size.')),
-                  value = TRUE)
-              )
+            tags$details(class = 'optional-section',
+              tags$summary('Quick analysis', tags$span(class = 'opt-badge', 'optional')),
+              br(),
+              checkboxInput('upload_run_analysis',
+                tagList('Run model_free analysis after upload',
+                  tip('Estimates doubling time, mumax, and AUC for all wells. Results appear in the Analyse tab. Takes 5–30 s.')),
+                value = TRUE)
             ),
             uiOutput('upload_progress_ui'),
             uiOutput('upload_key_display'),
@@ -1503,18 +1523,15 @@ server <- function(input, output, session) {
     data   <- raw_long()
     params <- list(correction_type = input$correction_type)
 
-    # KinBiont requires Julia 1.11 — check BEFORE calling julia_setup()
-    # (Julia 1.9.x causes segfault due to CHOLMOD incompatibility)
     if (plugin == 'kinbiont' && !isTRUE(.kinbiont_julia_ready())) {
       showNotification(
         tagList(
-          tags$strong('KinBiont.jl requires Julia 1.11+.'), tags$br(),
+          tags$strong('KinBiont.jl not available.'), tags$br(),
           tags$span(style = 'font-size:12px;',
-            '1. Download generic binaries: ',
+            '1. Install Julia 1.11+: ',
             tags$a('julialang.org/downloads', href='https://julialang.org/downloads/', target='_blank'), tags$br(),
-            '2. In R: ', tags$code('install.packages("JuliaCall")'), tags$br(),
-            '3. In Julia: ', tags$code('Pkg.add("Kinbiont")'), tags$br(),
-            '4. Set ', tags$code('JULIA_HOME'), ' in ~/.Renviron to the Julia 1.11 bin path.'
+            '2. In Julia: ', tags$code('using Pkg; Pkg.add(url="https://github.com/pinheiroGroup/Kinbiont.jl")'), tags$br(),
+            '3. Optional: set JULIA_HOME in ~/.Renviron to the Julia bin dir.'
           )
         ),
         type = 'warning', duration = 15

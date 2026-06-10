@@ -27,6 +27,7 @@ qres_raw_to_long <- function(raw_csv, dataset_id,
                             variable.name = 'well', value.name = 'value',
                             variable.factor = FALSE)
   data.table::setnames(long, time_col, 'time_h')
+  long[, time_h := .parse_time_to_hours(as.character(time_h))]
   long[, dataset_id  := dataset_id]
   long[, plate_id    := plate_id]
   long[, well_id     := paste(dataset_id, plate_id, well, sep = '__')]

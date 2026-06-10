@@ -384,7 +384,7 @@ qres_validate_raw_csv <- function(csv_path) {
 
   # ── Time column ───────────────────────────────────────────────────────────
   if (!is.na(time_col) && time_col %in% names(dt)) {
-    time_vals <- suppressWarnings(as.numeric(dt[[time_col]]))
+    time_vals <- .parse_time_to_hours(as.character(dt[[time_col]]))
 
     if (any(is.na(time_vals)))
       issues <- c(issues, paste(
@@ -405,12 +405,11 @@ qres_validate_raw_csv <- function(csv_path) {
       issues <- c(issues, paste('Only', n_points, 'time points — need at least 5 for a growth curve'))
 
     t_range <- range(time_vals, na.rm = TRUE)
-    if (diff(t_range) < 0.5)
-      warns <- c(warns, 'Time span is less than 0.5 h — check that time is in hours, not minutes or seconds')
-    if (t_range[2] > 300)
+    if (diff(t_range) < 0.08)   # < ~5 minutes total span
+      warns <- c(warns, 'Time span is less than 5 minutes — check that the time column was parsed correctly')
+    if (t_range[2] > 720)       # > 30 days in hours
       warns <- c(warns, paste(
-        'Maximum time is', round(t_range[2], 1),
-        '— if this is in minutes or seconds, set time_unit accordingly'))
+        'Maximum time is', round(t_range[2], 1), 'h — unusually long experiment, please verify'))
   }
 
   # ── OD / value columns ────────────────────────────────────────────────────
