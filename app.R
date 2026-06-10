@@ -1341,6 +1341,7 @@ server <- function(input, output, session) {
   comp_filtered_rv     <- reactiveVal(data.frame())
   comp_upload_rv       <- reactiveVal(NULL)
   comp_upload_valid    <- reactiveVal(FALSE)
+  comp_upload_tried    <- reactiveVal(FALSE)  # TRUE once user picks a file; FALSE after Clear
   comp_email_status    <- reactiveVal('')
   analyze_selected_ids <- reactiveVal(character(0))  # passed from Search Data
   analyse_mode_rv      <- reactiveVal(NULL)           # 'A', 'B', or 'C'
@@ -2164,6 +2165,7 @@ server <- function(input, output, session) {
   observeEvent(input$comp_clear_upload, {
     comp_upload_rv(NULL)
     comp_upload_valid(FALSE)
+    comp_upload_tried(FALSE)
     updateSelectizeInput(session, 'comp_upload_blanks',
                          choices = character(0), selected = character(0))
     updateSelectizeInput(session, 'comp_upload_controls',
@@ -2353,6 +2355,7 @@ server <- function(input, output, session) {
 
   observeEvent(input$comp_upload_file, {
     req(input$comp_upload_file)
+    comp_upload_tried(TRUE)
     path <- input$comp_upload_file$datapath
     check <- tryCatch(qres_validate_raw_csv(path), error = function(e) list(ok = FALSE, issues = conditionMessage(e)))
     if (!isTRUE(check$ok)) {
@@ -2372,7 +2375,7 @@ server <- function(input, output, session) {
   })
 
   output$comp_upload_status <- renderUI({
-    req(input$comp_upload_file)
+    if (!isTRUE(comp_upload_tried())) return(NULL)
     if (isTRUE(comp_upload_valid()))
       tags$small(style = 'color:#27ae60;', icon('check'),
         sprintf(' Valid — %d wells, %d time-points.',
