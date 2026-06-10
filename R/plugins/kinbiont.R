@@ -114,7 +114,23 @@ for grp in DataFrames.groupby(df, :well_id)
 end
 '
 
+KINBIONT_MIN_TIMEPOINTS <- 7L
+
 qres_plugin_kinbiont <- function(raw_long, metadata = NULL, params = list()) {
+  n_tp <- length(unique(raw_long$time_h))
+  if (n_tp < KINBIONT_MIN_TIMEPOINTS) {
+    msg <- sprintf(
+      'KinBiont requires ≥%d time points per well; only %d found — skipped.',
+      KINBIONT_MIN_TIMEPOINTS, n_tp)
+    message('[kinbiont] ', msg)
+    return(list(
+      processed_measurements = raw_long,
+      derived_metrics        = data.frame(),
+      model_fits             = data.frame(),
+      logs = list(message = msg, status = 'skipped_insufficient_timepoints')
+    ))
+  }
+
   if (!.kinbiont_julia_ready()) {
     return(list(
       processed_measurements = raw_long,

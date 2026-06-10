@@ -100,10 +100,28 @@ qres_search_by_publication <- function(con, author = NULL, year_min = NULL,
   ", full_where))
 }
 
+qres_get_datasets_by_ids <- function(con, ids) {
+  if (length(ids) == 0) return(data.frame())
+  ph <- paste(rep('?', length(ids)), collapse = ', ')
+  DBI::dbGetQuery(con, sprintf("
+    SELECT d.dataset_id, w.species, w.strain, p.temperature_c,
+           w.medium_type, w.perturbation_type, w.perturbation, d.authors
+    FROM dataset d
+    LEFT JOIN plate p USING(dataset_id)
+    LEFT JOIN (
+      SELECT plate_id, species, strain, medium_type, perturbation_type, perturbation
+      FROM well_metadata GROUP BY 1,2,3,4,5,6
+    ) w USING(plate_id)
+    WHERE d.dataset_id IN (%s)", ph),
+    params = as.list(ids))
+}
+
 qres_get_distinct_authors <- function(con) {
   res <- DBI::dbGetQuery(con, "SELECT authors FROM dataset WHERE authors IS NOT NULL")
   parts <- unlist(strsplit(res$authors, ','))
-  sort(unique(trimws(parts[nzchar(trimws(parts))])))
+  parts <- trimws(parts[nzchar(trimws(parts))])
+  parts <- tools::toTitleCase(tolower(parts))
+  sort(unique(parts))
 }
 
 qres_get_distinct_strains <- function(con, species) {

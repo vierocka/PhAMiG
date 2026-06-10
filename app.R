@@ -540,31 +540,7 @@ ui_search <- fluidPage(
       br(), br(),
       uiOutput('download_search_ui'),
       tags$hr(),
-      h5('Single-dataset analysis'),
-      selectInput('plugin',
-        tagList('Plugin', tip('model_free: fast, no model assumptions. gcplyr/growthrates: standard R packages. DGrowthR: Gaussian process. KinBiont.jl: Julia (needs Julia 1.11+).')),
-        choices = c('model_free', 'gcplyr', 'growthrates',
-                    'DGrowthR' = 'dgrothr', 'KinBiont' = 'kinbiont')),
-      conditionalPanel("input.plugin == 'kinbiont'",
-        tags$small(
-          icon('circle-info'), ' KinBiont.jl: log-linear growth modelling in Julia.',
-          tags$br(),
-          tags$a('Pinheiro et al. (2025) Nat. Commun.',
-                 href = 'https://www.nature.com/articles/s41467-025-61592-6',
-                 target = '_blank'),
-          ' | ',
-          tags$a('GitHub', href = 'https://github.com/pinheiroGroup/Kinbiont.jl',
-                 target = '_blank'),
-          ' | ',
-          tags$a('bio.tools', href = 'https://bio.tools/kinbiont', target = '_blank'),
-          tags$br(),
-          tags$em('Requires Julia 1.11+ with Kinbiont.jl installed.')
-        )
-      ),
-      selectInput('correction_type',
-        tagList('Blank correction', tip('none: raw OD values. blank_static: subtract mean of blank wells at time 0. blank_timewise: subtract blank curve at each time point. smooth_only: Savitzky-Golay smoothing only.')),
-        choices = c('none', 'blank_static', 'blank_timewise', 'smooth_only')),
-      actionButton('run_plugin', 'Run plugin on selected row', width = '100%'),
+      uiOutput('analyze_data_btn_ui'),
       tags$hr(),
       checkboxInput('log_y', 'Log-scale y axis', FALSE)
     ),
@@ -666,15 +642,27 @@ ui_analyse <- fluidPage(
       border-color: #2980b9; background: #eaf4fb;
       box-shadow: 0 4px 12px rgba(41,128,185,.22);
     }
+    .ac-card.ac-disabled {
+      opacity: 0.4; cursor: not-allowed; pointer-events: none;
+    }
     .ac-card img  { width: 80px; height: 80px; margin-bottom: 10px; }
     .ac-label     { font-weight: 700; font-size: 15px; color: #1a3a5c; margin-bottom: 3px; }
     .ac-sub       { color: #888; font-size: 12px; }
     .ac-active .ac-label { color: #1a6ba0; }
   '))),
   tags$script(HTML("
-    $(document).on('click', '.ac-card', function() {
+    Shiny.addCustomMessageHandler('setAnalyseMode', function(data) {
       $('.ac-card').removeClass('ac-active');
-      $(this).addClass('ac-active');
+      if (data.mode) {
+        $('.ac-card[data-mode=\"' + data.mode + '\"]').addClass('ac-active');
+      }
+      if (data.hasIds) {
+        $('.ac-card[data-mode=\"B\"], .ac-card[data-mode=\"C\"]')
+          .removeClass('ac-disabled');
+      } else {
+        $('.ac-card[data-mode=\"B\"], .ac-card[data-mode=\"C\"]')
+          .addClass('ac-disabled');
+      }
     });
   ")),
   fluidRow(
@@ -690,23 +678,23 @@ ui_analyse <- fluidPage(
 
   # ── Mode selector cards ────────────────────────────────────────────────────
   tags$div(class = 'ac-row',
-    tags$div(class = 'ac-card',
-      onclick = "Shiny.setInputValue('analyse_mode', 'A', {priority: 'event'})",
+    tags$div(class = 'ac-card', `data-mode` = 'A',
+      onclick = "Shiny.setInputValue('analyse_mode_click', 'A', {priority: 'event'})",
       img(src = 'qres_my_data.png',    alt = 'My file'),
       tags$div(class = 'ac-label', 'My file'),
       tags$div(class = 'ac-sub',   'Upload & analyse your own data')
     ),
-    tags$div(class = 'ac-card',
-      onclick = "Shiny.setInputValue('analyse_mode', 'B', {priority: 'event'})",
-      img(src = 'qres_repository.png', alt = 'Browse repository'),
-      tags$div(class = 'ac-label', 'Browse repository'),
-      tags$div(class = 'ac-sub',   'Filter & select from the DB')
+    tags$div(class = 'ac-card ac-disabled', `data-mode` = 'B',
+      onclick = "Shiny.setInputValue('analyse_mode_click', 'B', {priority: 'event'})",
+      img(src = 'qres_repository.png', alt = 'Repository'),
+      tags$div(class = 'ac-label', 'Repository'),
+      tags$div(class = 'ac-sub',   'Analyse datasets from Search Data')
     ),
-    tags$div(class = 'ac-card',
-      onclick = "Shiny.setInputValue('analyse_mode', 'C', {priority: 'event'})",
+    tags$div(class = 'ac-card ac-disabled', `data-mode` = 'C',
+      onclick = "Shiny.setInputValue('analyse_mode_click', 'C', {priority: 'event'})",
       img(src = 'qres_compare.png',    alt = 'My file + repository'),
       tags$div(class = 'ac-label', 'My file + repository'),
-      tags$div(class = 'ac-sub',   'Combine upload and DB datasets')
+      tags$div(class = 'ac-sub',   'Combine upload with DB datasets')
     )
   ),
 
@@ -1348,12 +1336,15 @@ server <- function(input, output, session) {
   con <- qres_connect('data/qres.duckdb')
   onStop(function() qres_disconnect(con))
 
-  selected_dataset  <- reactiveVal(NULL)
-  dataset_results   <- reactiveVal(data.frame())
-  comp_filtered_rv  <- reactiveVal(data.frame())
-  comp_upload_rv    <- reactiveVal(NULL)
-  comp_upload_valid <- reactiveVal(FALSE)
-  comp_email_status <- reactiveVal('')
+  selected_dataset     <- reactiveVal(NULL)
+  dataset_results      <- reactiveVal(data.frame())
+  comp_filtered_rv     <- reactiveVal(data.frame())
+  comp_upload_rv       <- reactiveVal(NULL)
+  comp_upload_valid    <- reactiveVal(FALSE)
+  comp_email_status    <- reactiveVal('')
+  analyze_selected_ids <- reactiveVal(character(0))  # passed from Search Data
+  analyse_mode_rv      <- reactiveVal(NULL)           # 'A', 'B', or 'C'
+  mode_a_reset         <- reactiveVal(0L)             # increment forces Mode A re-render
 
   # ── Auto-load on startup — populate filter dropdowns and search results ──────
   session$onFlushed(function() {
@@ -2022,14 +2013,77 @@ server <- function(input, output, session) {
     )
   }
 
+  # ── Mode card clicks → analyse_mode_rv ────────────────────────────────────
+  observeEvent(input$analyse_mode_click, {
+    m <- input$analyse_mode_click
+    if (m %in% c('B', 'C') && length(analyze_selected_ids()) == 0) return()
+    analyse_mode_rv(m)
+  })
+
+  # Auto-activate Mode B when IDs arrive AND user is on the Analyse page
+  observe({
+    ids <- analyze_selected_ids()
+    if (length(ids) > 0 && is_page('analyse') && is.null(analyse_mode_rv()))
+      analyse_mode_rv('B')
+  })
+
+  # Sync card highlight + disabled state with server mode
+  observe({
+    mode   <- analyse_mode_rv() %||% ''
+    hasIds <- length(analyze_selected_ids()) > 0
+    session$sendCustomMessage('setAnalyseMode', list(mode = mode, hasIds = hasIds))
+  })
+
+  # ── "Analyze Data" button in Search Data ───────────────────────────────────
+  output$analyze_data_btn_ui <- renderUI({
+    sel <- input$dataset_table_rows_selected
+    n   <- length(sel)
+    if (n == 0)
+      tags$button(icon('chart-bar'), ' Analyze selected',
+                  class = 'btn btn-success disabled',
+                  disabled = NA, style = 'width:100%; cursor:not-allowed; opacity:0.55;',
+                  title = 'Select at least one row in the Datasets table first')
+    else
+      actionButton('go_to_analyze',
+                   tagList(icon('chart-bar'), sprintf(' Analyze %d dataset(s)', n)),
+                   class = 'btn-success', width = '100%')
+  })
+
+  observeEvent(input$go_to_analyze, {
+    sel  <- input$dataset_table_rows_selected
+    rows <- dataset_results()
+    if (length(sel) == 0 || nrow(rows) == 0) return()
+    analyze_selected_ids(rows$dataset_id[sel])
+    analyse_mode_rv('B')
+    shiny.router::change_page('analyse')
+  })
+
+  # ── Dataset summary for Mode B / C header ──────────────────────────────────
+  output$comp_selected_summary <- DT::renderDT({
+    meta <- tryCatch(
+      qres_get_datasets_by_ids(con, analyze_selected_ids()),
+      error = function(e) data.frame())
+    if (nrow(meta) == 0) return(DT::datatable(data.frame(), options = list(dom = 't')))
+    show <- intersect(c('dataset_id', 'species', 'strain', 'temperature_c',
+                         'medium_type', 'perturbation'), names(meta))
+    DT::datatable(meta[, show, drop = FALSE], rownames = FALSE,
+                  options = list(dom = 't', pageLength = 50, scrollX = TRUE))
+  }, server = FALSE)
+
+  # ── Mode A/B/C main panel ──────────────────────────────────────────────────
   output$analyse_main_panel <- renderUI({
-    mode <- input$analyse_mode %||% ''
+    mode <- analyse_mode_rv() %||% ''
     if (!nzchar(mode))
       return(tags$div(
         style = 'color:dimgray; text-align:center; padding:40px;',
-        icon('arrow-up'), ' Select a mode above to get started.'))
+        icon('arrow-up'),
+        ' Select a mode above.',
+        tags$br(), tags$br(),
+        tags$small('Repository and My file + repository require datasets selected in ',
+                   tags$a(href = route_link('search'), 'Search Data'), '.')))
 
     if (mode == 'A') {
+      mode_a_reset()   # declare dependency so Clear forces re-render
       tagList(
         hr(style = 'margin-top:0;'),
         .ui_upload_section(),
@@ -2043,54 +2097,70 @@ server <- function(input, output, session) {
       )
 
     } else if (mode == 'B') {
-      fluidRow(
-        column(3, .ui_filter_sidebar()),
-        column(9,
-          tabsetPanel(id = 'mode_b_tabs',
-            tabPanel('Datasets',
-              br(),
-              tags$small(style = 'color:dimgray;',
-                icon('hand-pointer'), ' Click rows to select datasets for analysis.'),
-              br(), br(),
-              DT::DTOutput('comp_filtered_dt')
-            ),
-            tabPanel('Growth curves',   br(), uiOutput('comp_curves_ui')),
-            tabPanel('Comparison plot', br(), uiOutput('comp_comparison_ui'))
+      n   <- length(analyze_selected_ids())
+      tagList(
+        tags$div(
+          style = paste('background:#eaf4fb; border-left:4px solid #2980b9;',
+                        'padding:10px 14px; margin-bottom:14px; border-radius:4px;',
+                        'display:flex; justify-content:space-between; align-items:center;'),
+          tags$span(icon('database'),
+            tags$b(sprintf(' %d dataset(s)', n)),
+            tags$span(style = 'color:#555; margin-left:6px;', 'selected from repository')),
+          tags$span(
+            tags$a(href = route_link('search'), style = 'font-size:12px; color:#2980b9;',
+                   icon('arrow-left'), ' Change selection'),
+            tags$span(style = 'margin: 0 8px; color:#ccc;', '|'),
+            actionLink('comp_upgrade_to_c', icon('upload'), ' + Add my own file')
           )
+        ),
+        tags$details(style = 'margin-bottom:10px;',
+          tags$summary(style = 'font-size:12px; color:#888; cursor:pointer;',
+            'Show selected datasets'),
+          br(),
+          DT::DTOutput('comp_selected_summary')
+        ),
+        tabsetPanel(id = 'mode_b_tabs',
+          tabPanel('Growth curves',   br(), uiOutput('comp_curves_ui')),
+          tabPanel('Comparison plot', br(), uiOutput('comp_comparison_ui'))
         )
       )
 
     } else {  # mode == 'C'
-      fluidRow(
-        column(3, .ui_filter_sidebar()),
-        column(9,
-          tags$details(
-            style = 'margin-bottom:14px; border:1px solid #ddd; border-radius:4px; padding:10px;',
-            tags$summary(
-              style = 'font-weight:bold; color:#337ab7; font-size:14px; cursor:pointer;',
-              icon('upload'), ' Upload your own growth curves',
-              tags$small(style = 'font-weight:normal; color:#777; margin-left:8px;',
-                         '(optional — combined with DB selection above)')
-            ),
-            br(), .ui_upload_section()
-          ),
-          tabsetPanel(id = 'mode_c_tabs',
-            tabPanel('Datasets',
-              br(),
-              tags$small(style = 'color:dimgray;',
-                icon('hand-pointer'), ' Click rows to select DB datasets.'),
-              br(), br(),
-              DT::DTOutput('comp_filtered_dt')
-            ),
-            tabPanel('Growth curves',   br(), uiOutput('comp_curves_ui')),
-            tabPanel('Comparison plot', br(), uiOutput('comp_comparison_ui'))
-          )
+      n <- length(analyze_selected_ids())
+      tagList(
+        tags$div(
+          style = paste('background:#eaf4fb; border-left:4px solid #2980b9;',
+                        'padding:10px 14px; margin-bottom:14px; border-radius:4px;',
+                        'display:flex; justify-content:space-between; align-items:center;'),
+          tags$span(icon('database'),
+            tags$b(sprintf(' %d dataset(s)', n)),
+            tags$span(style = 'color:#555; margin-left:6px;', 'selected from repository')),
+          tags$a(href = route_link('search'), style = 'font-size:12px; color:#2980b9;',
+                 icon('arrow-left'), ' Change selection')
+        ),
+        tags$details(style = 'margin-bottom:10px;',
+          tags$summary(style = 'font-size:12px; color:#888; cursor:pointer;',
+            'Show selected datasets'),
+          br(),
+          DT::DTOutput('comp_selected_summary')
+        ),
+        tags$div(
+          style = 'border:1px solid #d0dce8; border-radius:6px; padding:12px; margin-bottom:14px;',
+          tags$div(style = 'font-weight:bold; color:#337ab7; margin-bottom:8px;',
+            icon('upload'), ' My own file',
+            tags$small(style = 'font-weight:normal; color:#777; margin-left:6px;',
+                       '— combined with repository datasets above')),
+          .ui_upload_section()
+        ),
+        tabsetPanel(id = 'mode_c_tabs',
+          tabPanel('Growth curves',   br(), uiOutput('comp_curves_ui')),
+          tabPanel('Comparison plot', br(), uiOutput('comp_comparison_ui'))
         )
       )
     }
   })
 
-  # Clear uploaded data (Mode A / C)
+  # Clear uploaded data — Mode A: re-render; Mode C: downgrade to B
   observeEvent(input$comp_clear_upload, {
     comp_upload_rv(NULL)
     comp_upload_valid(FALSE)
@@ -2098,7 +2168,14 @@ server <- function(input, output, session) {
                          choices = character(0), selected = character(0))
     updateSelectizeInput(session, 'comp_upload_controls',
                          choices = character(0), selected = character(0))
+    if ((analyse_mode_rv() %||% '') == 'C')
+      analyse_mode_rv('B')
+    else
+      mode_a_reset(mode_a_reset() + 1L)  # force re-render → resets file input
   })
+
+  # "+ Add my own file" in Mode B → upgrade to C
+  observeEvent(input$comp_upgrade_to_c, analyse_mode_rv('C'))
 
   # Clear all filter inputs (Mode B / C)
   observeEvent(input$comp_clear_filters, {
@@ -2331,11 +2408,9 @@ server <- function(input, output, session) {
 
   # ── Active dataset IDs (DB selection) + upload flag ───────────────────────
   comp_active_ids <- reactive({
-    sel <- input$comp_filtered_dt_rows_selected
-    if (length(sel) == 0) return(character(0))
-    df <- comp_filtered_rv()
-    if (nrow(df) == 0) return(character(0))
-    df$dataset_id[sel]
+    mode <- analyse_mode_rv() %||% ''
+    if (mode %in% c('B', 'C')) return(analyze_selected_ids())
+    character(0)
   })
 
   comp_has_upload <- reactive({
