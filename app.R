@@ -1986,14 +1986,41 @@ server <- function(input, output, session) {
     .all_raw   <- all_raw
     .tools     <- tools_selected
 
-    # Heavy fitting runs in a background worker — UI stays live.
+    # Python plugins (reticulate) cannot be initialised inside a multisession
+    # worker — run them synchronously on the main thread first.
+    .python_plugins <- intersect(.tools, 'omniplate')
+    .r_plugins      <- setdiff(.tools, .python_plugins)
+
+    .py_metrics_df <- if (length(.python_plugins) > 0) {
+      py_rows <- lapply(seq_len(nrow(.filtered)), function(i) {
+        did <- .filtered$dataset_id[i]
+        raw <- .all_raw[[did]]
+        if (is.null(raw)) return(NULL)
+        lapply(.python_plugins, function(p) {
+          res <- tryCatch(qres_run_plugin(raw, p), error = function(e) NULL)
+          if (!is.null(res) && !is.null(res$derived_metrics) &&
+              nrow(res$derived_metrics) > 0) {
+            cmp <- dplyr::mutate(res$derived_metrics, tool = p)
+            cmp$temperature_c <- .filtered$temperature_c[i]
+            cmp$dataset_id    <- did
+            cmp$plot_label    <- .label_map[[did]]
+            cmp
+          } else NULL
+        })
+      })
+      dplyr::bind_rows(Filter(Negate(is.null), unlist(py_rows, recursive = FALSE)))
+    } else {
+      data.frame()
+    }
+
+    # R plugins run in a background worker — UI stays live.
     future_promise({
       all_metrics <- lapply(seq_len(nrow(.filtered)), function(i) {
         did   <- .filtered$dataset_id[i]
         raw   <- .all_raw[[did]]
         if (is.null(raw)) return(NULL)
         cmp <- tryCatch(
-          qres_compare_plugin_outputs(raw, plugins = .tools),
+          qres_compare_plugin_outputs(raw, plugins = .r_plugins),
           error = function(e) NULL
         )
         if (!is.null(cmp) && nrow(cmp) > 0) {
@@ -2008,11 +2035,12 @@ server <- function(input, output, session) {
         raws    = dplyr::bind_rows(Filter(Negate(is.null), .all_raw))
       )
     }) %...>% (function(result) {
-      comparison_result(result$metrics)
+      all_metrics <- dplyr::bind_rows(result$metrics, .py_metrics_df)
+      comparison_result(all_metrics)
       comp_raw_long(result$raws)
       comp_show_email(TRUE)
-      n_m <- nrow(result$metrics); n_d <- length(unique(result$metrics$dataset_id))
-      tools_got   <- unique(result$metrics$tool)
+      n_m <- nrow(all_metrics); n_d <- length(unique(all_metrics$dataset_id))
+      tools_got   <- unique(all_metrics$tool)
       tools_asked <- .tools
       tools_miss  <- setdiff(tools_asked, tools_got)
       miss_note   <- if (length(tools_miss) > 0)
@@ -3387,13 +3415,26 @@ server <- function(input, output, session) {
         if (show) lab <- paste0(lab, ' + ', pert)
         lab
       }
+      nl_tools        <- input$nl_comp_tools %||% c('model_free', 'gcplyr', 'growthrates')
+      nl_py_plugins   <- intersect(nl_tools, 'omniplate')
+      nl_r_plugins    <- setdiff(nl_tools, nl_py_plugins)
       all_cmp <- lapply(ids, function(did) {
         raw <- tryCatch(qres_get_raw_curves(con, did), error = function(e) NULL)
         if (is.null(raw)) return(NULL)
+        # R plugins via compare (cached)
         cmp <- tryCatch(
-          qres_compare_plugin_outputs(raw,
-            plugins = input$nl_comp_tools %||% c('model_free', 'gcplyr', 'growthrates')),
+          qres_compare_plugin_outputs(raw, plugins = nl_r_plugins),
           error = function(e) NULL)
+        # omniplate on main thread
+        if (length(nl_py_plugins) > 0) {
+          py_cmp <- tryCatch({
+            res <- qres_run_plugin(raw, 'omniplate')
+            if (!is.null(res$derived_metrics) && nrow(res$derived_metrics) > 0)
+              dplyr::mutate(res$derived_metrics, tool = 'omniplate')
+            else NULL
+          }, error = function(e) NULL)
+          cmp <- dplyr::bind_rows(cmp, py_cmp)
+        }
         if (!is.null(cmp) && nrow(cmp) > 0) {
           cmp$dataset_id <- did
           cmp$plot_label <- .nl_label(did)
