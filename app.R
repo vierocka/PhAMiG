@@ -668,7 +668,8 @@ ui_analyse <- fluidPage(
           selected = c('model_free', 'gcplyr', 'growthrates')),
         selectInput('comp_metric', 'Primary metric',
           choices  = c('doubling_time_h', 'mumax_percapita', 'lag_time_h',
-                       'auc_trapezoid', 'max_od', 'delta_od', 'asymptote_od'),
+                       'auc_trapezoid', 'max_od', 'delta_od', 'asymptote_od',
+                       'max_death_rate'),
           selected = 'doubling_time_h'),
         actionButton('run_comparison', 'Run comparison', width = '100%',
                      class = 'btn-success'),
@@ -740,7 +741,7 @@ ui_ask <- fluidPage(
       br(),
       selectInput('nl_metric_select', 'Metric to plot',
         choices  = c('doubling_time_h', 'mumax_percapita', 'lag_time_h',
-                     'auc_trapezoid', 'max_od', 'delta_od'),
+                     'auc_trapezoid', 'max_od', 'delta_od', 'max_death_rate'),
         selected = 'doubling_time_h'),
       plotOutput('nl_comp_plot', height = '420px')),
     tabPanel('Growth curves',
@@ -1887,22 +1888,37 @@ server <- function(input, output, session) {
         paste('Found', nrow(filtered), 'datasets. Running', length(input$comp_tools), 'tools…')
       )
 
+      # Build human-readable label: "E. coli 37°C" or "E. coli 37°C + rifampicin"
+      .mk_label <- function(sp, tc, pert) {
+        lab  <- paste0(if (nzchar(sp %||% '')) sp else '?', ' ', round(tc, 1), '°C')
+        pert <- trimws(pert %||% '')
+        if (nzchar(pert) && !tolower(pert) %in% c('none', 'na')) lab <- paste0(lab, ' + ', pert)
+        lab
+      }
+      label_map <- setNames(
+        mapply(.mk_label, filtered$species, filtered$temperature_c, filtered$perturbation %||% ''),
+        filtered$dataset_id
+      )
+
       all_raw    <- list()
       all_metrics <- lapply(seq_len(nrow(filtered)), function(i) {
-        did <- filtered$dataset_id[i]
-        tc  <- filtered$temperature_c[i]
-        setProgress(i / nrow(filtered), detail = paste('Processing', did, '…'))
+        did   <- filtered$dataset_id[i]
+        tc    <- filtered$temperature_c[i]
+        label <- label_map[[did]]
+        setProgress(i / nrow(filtered), detail = paste('Processing', label, '…'))
 
         raw <- tryCatch(qres_get_raw_curves(con, did), error = function(e) NULL)
         if (is.null(raw)) return(NULL)
 
         raw$temperature_c <- tc
+        raw$plot_label    <- label
         all_raw[[did]] <<- raw
 
         cmp <- qres_compare_plugin_outputs(raw, plugins = input$comp_tools)
         if (nrow(cmp) > 0) {
           cmp$temperature_c <- tc
           cmp$dataset_id    <- cmp$dataset_id %||% did
+          cmp$plot_label    <- label
         }
         cmp
       })
@@ -1931,9 +1947,10 @@ server <- function(input, output, session) {
                           label = 'Click "Run comparison" to populate the plot.') +
         ggplot2::theme_void())
     }
+    facet_col <- if ('plot_label' %in% names(df)) 'plot_label' else 'dataset_id'
     qres_plot_metric_comparison(df, metric = input$comp_metric,
-                                 facet_by = if (length(unique(df$dataset_id)) > 1)
-                                   'dataset_id' else NULL)
+                                 facet_by = if (length(unique(df[[facet_col]])) > 1)
+                                   facet_col else NULL)
   })
 
   output$comp_curves_panel <- renderUI({
@@ -1946,9 +1963,12 @@ server <- function(input, output, session) {
   })
 
   output$comp_curves <- renderPlot({
-    req(!is.null(comp_raw_long()))
-    qres_plot_growth(comp_raw_long(), log_y = input$comp_log_y %||% FALSE,
-                     title = 'Filtered datasets — raw growth curves')
+    raw <- comp_raw_long()
+    req(!is.null(raw))
+    colour_col <- if ('plot_label' %in% names(raw)) 'plot_label' else 'dataset_id'
+    qres_plot_growth(raw, log_y = input$comp_log_y %||% FALSE,
+                     colour_by = colour_col,
+                     title = NULL)
   })
 
   output$comp_table <- renderDT({
@@ -3106,13 +3126,28 @@ server <- function(input, output, session) {
             label = 'No raw data registered for these datasets.') +
           ggplot2::theme_void())
       }
+      # Build label map from res$data (has species, temperature_c, perturbation)
+      .nl_label <- function(did) {
+        row  <- res$data[res$data$dataset_id == did, ][1, ]
+        sp   <- row$species %||% ''
+        tc   <- row$temperature_c %||% NA
+        pert <- trimws(row$perturbation %||% '')
+        lab  <- paste0(if (nzchar(sp)) sp else did,
+                       if (is.finite(as.numeric(tc))) paste0(' ', round(as.numeric(tc), 1), '°C') else '')
+        if (nzchar(pert) && !tolower(pert) %in% c('none', 'na')) lab <- paste0(lab, ' + ', pert)
+        lab
+      }
       all_cmp <- lapply(ids, function(did) {
         raw <- tryCatch(qres_get_raw_curves(con, did), error = function(e) NULL)
         if (is.null(raw)) return(NULL)
         cmp <- tryCatch(
-          qres_compare_plugin_outputs(raw, plugins = c('model_free', 'gcplyr', 'growthrates')),
+          qres_compare_plugin_outputs(raw,
+            plugins = input$comp_tools %||% c('model_free', 'gcplyr', 'growthrates')),
           error = function(e) NULL)
-        if (!is.null(cmp) && nrow(cmp) > 0) cmp$dataset_id <- did
+        if (!is.null(cmp) && nrow(cmp) > 0) {
+          cmp$dataset_id <- did
+          cmp$plot_label <- .nl_label(did)
+        }
         cmp
       })
       combined <- dplyr::bind_rows(Filter(Negate(is.null), all_cmp))
@@ -3122,8 +3157,9 @@ server <- function(input, output, session) {
             label = 'No metrics computed for these datasets.') +
           ggplot2::theme_void())
       }
+      facet_col <- if ('plot_label' %in% names(combined)) 'plot_label' else 'dataset_id'
       return(qres_plot_metric_comparison(combined, metric = metric,
-               facet_by = if (length(unique(combined$dataset_id)) > 1) 'dataset_id' else NULL))
+               facet_by = if (length(unique(combined[[facet_col]])) > 1) facet_col else NULL))
     }
 
     ggplot2::ggplot() +
@@ -3161,13 +3197,28 @@ server <- function(input, output, session) {
 
     raw_list <- lapply(ids, function(did) {
       df <- tryCatch(qres_get_raw_curves(con, did), error = function(e) NULL)
-      if (!is.null(df) && nrow(df) > 0) { df$dataset_id <- did; df }
+      if (!is.null(df) && nrow(df) > 0) {
+        df$dataset_id <- did
+        # Attach label from NL result metadata if available
+        if ('dataset_id' %in% names(res$data)) {
+          row  <- res$data[res$data$dataset_id == did, ][1, ]
+          sp   <- trimws(row$species %||% '')
+          tc   <- row$temperature_c %||% NA
+          pert <- trimws(row$perturbation %||% '')
+          lab  <- paste0(if (nzchar(sp)) sp else did,
+                         if (is.finite(as.numeric(tc))) paste0(' ', round(as.numeric(tc), 1), '°C') else '')
+          if (nzchar(pert) && !tolower(pert) %in% c('none', 'na')) lab <- paste0(lab, ' + ', pert)
+          df$plot_label <- lab
+        }
+        df
+      }
     })
     combined <- dplyr::bind_rows(Filter(Negate(is.null), raw_list))
     if (nrow(combined) == 0) return(NULL)
 
-    title <- paste0('Growth curves — ', length(ids), ' dataset(s)')
-    qres_plot_growth(combined, log_y = input$nl_log_y %||% FALSE, title = title)
+    colour_col <- if ('plot_label' %in% names(combined)) 'plot_label' else 'dataset_id'
+    qres_plot_growth(combined, log_y = input$nl_log_y %||% FALSE,
+                     colour_by = colour_col, title = NULL)
   })
 }
 
