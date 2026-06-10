@@ -644,130 +644,73 @@ ui_search <- fluidPage(
 # ── ANALYSE & COMPARE ─────────────────────────────────────────────────────────
 ui_analyse <- fluidPage(
   theme = shinytheme('cerulean'),
-  tags$head(tags$style(HTML('body { padding-bottom: 60px; }
-    details > summary { cursor: pointer; list-style: none; }
-    details > summary::-webkit-details-marker { display: none; }
-    details > summary::marker { display: none; }
-    .upload-summary { font-weight: bold; color: #337ab7; font-size: 14px; }
-    .upload-summary:hover { color: #23527c; }
+  tags$head(tags$style(HTML('
+    body { padding-bottom: 60px; }
+    .ac-row {
+      display: flex; gap: 18px; justify-content: center;
+      margin: 20px 0 28px; flex-wrap: wrap;
+    }
+    .ac-card {
+      display: flex; flex-direction: column; align-items: center;
+      width: 200px; padding: 20px 14px 16px;
+      background: #fff; border: 2px solid #d0dce8; border-radius: 10px;
+      cursor: pointer; text-align: center; user-select: none;
+      box-shadow: 0 2px 6px rgba(0,0,0,.07);
+      transition: box-shadow .18s, transform .18s, border-color .18s;
+    }
+    .ac-card:hover {
+      box-shadow: 0 6px 18px rgba(0,0,0,.13);
+      transform: translateY(-3px); border-color: #2980b9;
+    }
+    .ac-card.ac-active {
+      border-color: #2980b9; background: #eaf4fb;
+      box-shadow: 0 4px 12px rgba(41,128,185,.22);
+    }
+    .ac-card img  { width: 80px; height: 80px; margin-bottom: 10px; }
+    .ac-label     { font-weight: 700; font-size: 15px; color: #1a3a5c; margin-bottom: 3px; }
+    .ac-sub       { color: #888; font-size: 12px; }
+    .ac-active .ac-label { color: #1a6ba0; }
   '))),
+  tags$script(HTML("
+    $(document).on('click', '.ac-card', function() {
+      $('.ac-card').removeClass('ac-active');
+      $(this).addClass('ac-active');
+    });
+  ")),
   fluidRow(
     column(4,
       img(src = 'PhaMiG_logo.png', height = '52px', alt = 'PhaMiG',
           style = 'margin-right:8px; vertical-align:middle;'),
-      img(src = 'QresDB_logo.png', height = '52px', alt = 'Qres DB',
+      img(src = 'QresDB_logo.png',  height = '52px', alt = 'Qres DB',
           style = 'vertical-align:middle;')
     ),
     column(8, h3('Analyze Data'))
   ),
   hr(),
-  fluidRow(
-    # ── Sidebar ───────────────────────────────────────────────────────────────
-    column(3,
-      wellPanel(
-        h5('Filter datasets'),
-        selectizeInput('comp_author', 'Author', choices = NULL,
-                       options = list(placeholder = 'all authors')),
-        selectizeInput('comp_species', 'Species', choices = NULL,
-                       options = list(placeholder = 'all species')),
-        conditionalPanel(
-          "output.comp_strain_visible === true",
-          selectizeInput('comp_strain', 'Strain', choices = NULL,
-                         options = list(placeholder = 'all strains'))
-        ),
-        sliderInput('comp_temp', 'Temperature (°C)',
-                    min = 0, max = 60, value = c(25, 45), step = 1),
-        textInput('comp_medium', 'Medium', placeholder = 'e.g. LB, MOPS, M9'),
-        selectizeInput('comp_perturb_type', 'Perturbation type', choices = NULL,
-                       options = list(placeholder = 'all types')),
-        conditionalPanel(
-          "input.comp_perturb_type !== null && input.comp_perturb_type !== ''",
-          selectizeInput('comp_perturb_val', 'Perturbation', choices = NULL,
-                         options = list(placeholder = 'all'))
-        ),
-        br(),
-        uiOutput('comp_search_btn')
-      )
+
+  # ── Mode selector cards ────────────────────────────────────────────────────
+  tags$div(class = 'ac-row',
+    tags$div(class = 'ac-card',
+      onclick = "Shiny.setInputValue('analyse_mode', 'A', {priority: 'event'})",
+      img(src = 'qres_my_data.png',    alt = 'My file'),
+      tags$div(class = 'ac-label', 'My file'),
+      tags$div(class = 'ac-sub',   'Upload & analyse your own data')
     ),
-
-    # ── Main panel ────────────────────────────────────────────────────────────
-    column(9,
-      # Upload section (collapsible)
-      tags$details(
-        style = 'margin-bottom:14px; border:1px solid #ddd; border-radius:4px; padding:10px;',
-        tags$summary(
-          class = 'upload-summary',
-          icon('upload'), ' Upload your own growth curves',
-          tags$small(style = 'font-weight:normal; color:#777; margin-left:8px;',
-            '(optional — can be combined with database datasets)')
-        ),
-        br(),
-        fluidRow(
-          column(7,
-            fileInput('comp_upload_file', NULL, accept = c('.csv', '.tsv', 'text/csv'),
-                      placeholder = 'Choose OD CSV file'),
-            tags$small(style = 'color:#777;',
-              icon('circle-info'),
-              ' Column 1 = time (h), remaining = wells (A1, B2…).',
-              tags$br(),
-              actionButton('show_comp_demo', 'Demo file',
-                           class = 'btn btn-xs btn-info', icon = icon('table'),
-                           style = 'margin-top:4px;'))
-          ),
-          column(5, br(), uiOutput('comp_upload_status'))
-        ),
-        # Shown only after valid upload
-        conditionalPanel(
-          'output.comp_upload_ready === true',
-          hr(),
-          fluidRow(
-            column(6,
-              tags$b('Select wells to analyze', style = 'font-size:12px;'),
-              br(), br(),
-              DT::DTOutput('comp_upload_well_dt')
-            ),
-            column(6,
-              withSpinner(plotOutput('comp_upload_preview', height = '190px'),
-                          type = 6, color = '#5b9bd5')
-            )
-          ),
-          br(),
-          fluidRow(
-            column(6,
-              selectizeInput('comp_upload_blanks', 'Blank wells (background subtraction)',
-                             choices = NULL, multiple = TRUE,
-                             options = list(placeholder = 'none selected'))
-            ),
-            column(6,
-              selectizeInput('comp_upload_controls', 'Control wells (shown in black)',
-                             choices = NULL, multiple = TRUE,
-                             options = list(placeholder = 'none selected'))
-            )
-          )
-        )
-      ),
-
-      # Tabs
-      tabsetPanel(id = 'analyse_tabs',
-        tabPanel('Datasets',
-          br(),
-          tags$small(style = 'color:dimgray;',
-            icon('hand-pointer'), ' Click rows to select datasets for analysis.',
-            ' Select at least one to unlock the Growth curves and Comparison plot tabs.'),
-          br(), br(),
-          DT::DTOutput('comp_filtered_dt')
-        ),
-        tabPanel('Growth curves',
-          br(),
-          uiOutput('comp_curves_ui')
-        ),
-        tabPanel('Comparison plot',
-          br(),
-          uiOutput('comp_comparison_ui')
-        )
-      )
+    tags$div(class = 'ac-card',
+      onclick = "Shiny.setInputValue('analyse_mode', 'B', {priority: 'event'})",
+      img(src = 'qres_repository.png', alt = 'Browse repository'),
+      tags$div(class = 'ac-label', 'Browse repository'),
+      tags$div(class = 'ac-sub',   'Filter & select from the DB')
+    ),
+    tags$div(class = 'ac-card',
+      onclick = "Shiny.setInputValue('analyse_mode', 'C', {priority: 'event'})",
+      img(src = 'qres_compare.png',    alt = 'My file + repository'),
+      tags$div(class = 'ac-label', 'My file + repository'),
+      tags$div(class = 'ac-sub',   'Combine upload and DB datasets')
     )
   ),
+
+  uiOutput('analyse_main_panel'),
   bottom_nav
 )
 
@@ -1407,9 +1350,9 @@ server <- function(input, output, session) {
 
   selected_dataset  <- reactiveVal(NULL)
   dataset_results   <- reactiveVal(data.frame())
-  comp_filtered_rv  <- reactiveVal(data.frame())   # result of DB filter query
-  comp_upload_rv    <- reactiveVal(NULL)            # validated upload (long format)
-  comp_upload_valid <- reactiveVal(FALSE)           # upload passed validation
+  comp_filtered_rv  <- reactiveVal(data.frame())
+  comp_upload_rv    <- reactiveVal(NULL)
+  comp_upload_valid <- reactiveVal(FALSE)
   comp_email_status <- reactiveVal('')
 
   # ── Auto-load on startup — populate filter dropdowns and search results ──────
@@ -1422,7 +1365,8 @@ server <- function(input, output, session) {
     # Populate Analyse page filter dropdowns
     tryCatch({
       updateSelectizeInput(session, 'comp_author',
-                           choices = c('', qres_get_distinct_authors(con)), server = TRUE)
+                           choices = c('(none)' = '', qres_get_distinct_authors(con)),
+                           server  = TRUE)
       updateSelectizeInput(session, 'comp_species',
                            choices = c('', qres_get_distinct_species(con)), server = TRUE)
       updateSelectizeInput(session, 'comp_perturb_type',
@@ -1465,7 +1409,8 @@ server <- function(input, output, session) {
       updateSelectizeInput(session, 'comp_species',
                            choices = c('', species_list), server = TRUE)
       updateSelectizeInput(session, 'comp_author',
-                           choices = c('', qres_get_distinct_authors(con)), server = TRUE)
+                           choices = c('(none)' = '', qres_get_distinct_authors(con)),
+                           server  = TRUE)
       updateSelectizeInput(session, 'comp_perturb_type',
                            choices = c('', qres_get_distinct_perturbation_types(con)),
                            server = TRUE)
@@ -1988,6 +1933,183 @@ server <- function(input, output, session) {
   output$qc_heatmap_plot <- renderPlot({
     req(raw_long())
     qres_plot_endpoint_heatmap(raw_long())
+  })
+
+  # ── Analyse page — mode panel ─────────────────────────────────────────────
+
+  .ui_filter_sidebar <- function() {
+    wellPanel(
+      h5('Filter datasets'),
+      selectizeInput('comp_author', 'Author', choices = NULL,
+                     options = list(placeholder = '(none) — no filter')),
+      selectizeInput('comp_species', 'Species', choices = NULL,
+                     options = list(placeholder = 'all species')),
+      conditionalPanel(
+        'output.comp_strain_visible === true',
+        selectizeInput('comp_strain', 'Strain', choices = NULL,
+                       options = list(placeholder = 'all strains'))
+      ),
+      sliderInput('comp_temp', 'Temperature (°C)',
+                  min = 0, max = 60, value = c(25, 45), step = 1),
+      textInput('comp_medium', 'Medium', placeholder = 'e.g. LB, MOPS, M9'),
+      selectizeInput('comp_perturb_type', 'Perturbation type', choices = NULL,
+                     options = list(placeholder = 'all types')),
+      conditionalPanel(
+        "input.comp_perturb_type !== null && input.comp_perturb_type !== ''",
+        selectizeInput('comp_perturb_val', 'Perturbation', choices = NULL,
+                       options = list(placeholder = 'all'))
+      ),
+      br(),
+      uiOutput('comp_search_btn'),
+      tags$div(style = 'margin-top:6px; text-align:right;',
+        actionLink('comp_clear_filters', icon('times'), ' Clear filters'))
+    )
+  }
+
+  .ui_upload_section <- function() {
+    tagList(
+      fluidRow(
+        column(8,
+          tags$div(style = 'position:relative;',
+            fileInput('comp_upload_file', NULL,
+                      accept = c('.csv', '.tsv', 'text/csv'),
+                      placeholder = 'Choose OD CSV file'),
+            tags$div(style = 'position:absolute; top:0; right:0;',
+              actionButton('show_comp_demo', 'Demo file',
+                           class = 'btn btn-xs btn-info', icon = icon('table')))
+          ),
+          tags$small(style = 'color:#777;',
+            icon('circle-info'),
+            ' Column 1 = time (h), remaining = wells (A1, B2…).')
+        ),
+        column(4, br(), uiOutput('comp_upload_status'))
+      ),
+      conditionalPanel('output.comp_upload_ready === true',
+        hr(),
+        fluidRow(
+          column(6,
+            tags$b('Select wells to analyze', style = 'font-size:12px;'),
+            br(), br(),
+            DT::DTOutput('comp_upload_well_dt')
+          ),
+          column(6,
+            withSpinner(plotOutput('comp_upload_preview', height = '190px'),
+                        type = 6, color = '#5b9bd5')
+          )
+        ),
+        br(),
+        fluidRow(
+          column(6,
+            selectizeInput('comp_upload_blanks', 'Blank wells',
+                           choices = NULL, multiple = TRUE,
+                           options = list(placeholder = 'none selected'))
+          ),
+          column(6,
+            selectizeInput('comp_upload_controls', 'Control wells (shown in black)',
+                           choices = NULL, multiple = TRUE,
+                           options = list(placeholder = 'none selected'))
+          )
+        ),
+        fluidRow(column(12,
+          actionButton('comp_clear_upload', icon('trash'), ' Clear data',
+                       class = 'btn-sm btn-danger',
+                       title = 'Remove uploaded data and reset the form'),
+          tags$small(style = 'color:#888; margin-left:10px;',
+            'To permanently archive your data, use ',
+            tags$a(href = route_link('submit'), 'Submit Data'), '.')
+        ))
+      )
+    )
+  }
+
+  output$analyse_main_panel <- renderUI({
+    mode <- input$analyse_mode %||% ''
+    if (!nzchar(mode))
+      return(tags$div(
+        style = 'color:dimgray; text-align:center; padding:40px;',
+        icon('arrow-up'), ' Select a mode above to get started.'))
+
+    if (mode == 'A') {
+      tagList(
+        hr(style = 'margin-top:0;'),
+        .ui_upload_section(),
+        conditionalPanel('output.comp_upload_ready === true',
+          hr(),
+          tabsetPanel(id = 'mode_a_tabs',
+            tabPanel('Growth curves',   br(), uiOutput('comp_curves_ui')),
+            tabPanel('Comparison plot', br(), uiOutput('comp_comparison_ui'))
+          )
+        )
+      )
+
+    } else if (mode == 'B') {
+      fluidRow(
+        column(3, .ui_filter_sidebar()),
+        column(9,
+          tabsetPanel(id = 'mode_b_tabs',
+            tabPanel('Datasets',
+              br(),
+              tags$small(style = 'color:dimgray;',
+                icon('hand-pointer'), ' Click rows to select datasets for analysis.'),
+              br(), br(),
+              DT::DTOutput('comp_filtered_dt')
+            ),
+            tabPanel('Growth curves',   br(), uiOutput('comp_curves_ui')),
+            tabPanel('Comparison plot', br(), uiOutput('comp_comparison_ui'))
+          )
+        )
+      )
+
+    } else {  # mode == 'C'
+      fluidRow(
+        column(3, .ui_filter_sidebar()),
+        column(9,
+          tags$details(
+            style = 'margin-bottom:14px; border:1px solid #ddd; border-radius:4px; padding:10px;',
+            tags$summary(
+              style = 'font-weight:bold; color:#337ab7; font-size:14px; cursor:pointer;',
+              icon('upload'), ' Upload your own growth curves',
+              tags$small(style = 'font-weight:normal; color:#777; margin-left:8px;',
+                         '(optional — combined with DB selection above)')
+            ),
+            br(), .ui_upload_section()
+          ),
+          tabsetPanel(id = 'mode_c_tabs',
+            tabPanel('Datasets',
+              br(),
+              tags$small(style = 'color:dimgray;',
+                icon('hand-pointer'), ' Click rows to select DB datasets.'),
+              br(), br(),
+              DT::DTOutput('comp_filtered_dt')
+            ),
+            tabPanel('Growth curves',   br(), uiOutput('comp_curves_ui')),
+            tabPanel('Comparison plot', br(), uiOutput('comp_comparison_ui'))
+          )
+        )
+      )
+    }
+  })
+
+  # Clear uploaded data (Mode A / C)
+  observeEvent(input$comp_clear_upload, {
+    comp_upload_rv(NULL)
+    comp_upload_valid(FALSE)
+    updateSelectizeInput(session, 'comp_upload_blanks',
+                         choices = character(0), selected = character(0))
+    updateSelectizeInput(session, 'comp_upload_controls',
+                         choices = character(0), selected = character(0))
+  })
+
+  # Clear all filter inputs (Mode B / C)
+  observeEvent(input$comp_clear_filters, {
+    updateSelectizeInput(session, 'comp_author',   selected = '')
+    updateSelectizeInput(session, 'comp_species',  selected = '')
+    updateSelectizeInput(session, 'comp_strain',   selected = '')
+    updateSliderInput(session,    'comp_temp',     value    = c(25, 45))
+    updateTextInput(session,      'comp_medium',   value    = '')
+    updateSelectizeInput(session, 'comp_perturb_type', selected = '')
+    updateSelectizeInput(session, 'comp_perturb_val',  selected = '')
+    comp_filtered_rv(data.frame())
   })
 
   # ── Analyse page — cascade observers ─────────────────────────────────────
