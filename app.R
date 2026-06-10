@@ -741,10 +741,19 @@ ui_ask <- fluidPage(
       DTOutput('nl_table')),
     tabPanel('Comparison plot',
       br(),
-      selectInput('nl_metric_select', 'Metric to plot',
-        choices  = c('doubling_time_h', 'mumax_percapita', 'lag_time_h',
-                     'auc_trapezoid', 'max_od', 'delta_od', 'max_death_rate'),
-        selected = 'doubling_time_h'),
+      fluidRow(
+        column(4,
+          selectInput('nl_metric_select', 'Metric',
+            choices  = c('doubling_time_h', 'mumax_percapita', 'lag_time_h',
+                         'auc_trapezoid', 'max_od', 'delta_od', 'max_death_rate'),
+            selected = 'doubling_time_h')),
+        column(8,
+          checkboxGroupInput('nl_comp_tools', 'Tools',
+            choices  = c('model_free', 'gcplyr', 'growthrates',
+                         'dgrothr', 'kinbiont', 'omniplate'),
+            selected = c('model_free', 'gcplyr', 'growthrates'),
+            inline   = TRUE))
+      ),
       plotOutput('nl_comp_plot', height = '420px')),
     tabPanel('Growth curves',
       br(),
@@ -3187,7 +3196,7 @@ server <- function(input, output, session) {
         if (is.null(raw)) return(NULL)
         cmp <- tryCatch(
           qres_compare_plugin_outputs(raw,
-            plugins = input$comp_tools %||% c('model_free', 'gcplyr', 'growthrates')),
+            plugins = input$nl_comp_tools %||% c('model_free', 'gcplyr', 'growthrates')),
           error = function(e) NULL)
         if (!is.null(cmp) && nrow(cmp) > 0) {
           cmp$dataset_id <- did
