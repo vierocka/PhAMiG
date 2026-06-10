@@ -5,7 +5,7 @@
 #   install.packages("blastula")
 #   blastula::create_smtp_creds_file(
 #     file     = "~/.phamig_smtp_creds",
-#     user     = "viera.kovacova.ml@gmail.com",
+#     user     = Sys.getenv('PHAMIG_ADMIN_EMAIL'),   # set in ~/.Renviron
 #     host     = "smtp.gmail.com",
 #     port     = 587,
 #     use_ssl  = TRUE
@@ -16,8 +16,10 @@
 # After setup the function works silently; if blastula is absent or the
 # creds file is missing it logs a warning and returns FALSE.
 
-PHAMIG_ADMIN_EMAIL  <- "viera.kovacova.ml@gmail.com"
-PHAMIG_SMTP_CREDS   <- path.expand("~/.phamig_smtp_creds")
+PHAMIG_ADMIN_EMAIL  <- Sys.getenv('PHAMIG_ADMIN_EMAIL', unset = '')
+PHAMIG_SMTP_CREDS   <- path.expand(
+  Sys.getenv('PHAMIG_SMTP_CREDS', unset = '~/.phamig_smtp_creds')
+)
 
 phamig_notify_note <- function(note_id, note_type, note_text,
                                 author    = '',

@@ -1,3 +1,4 @@
+if (file.exists('~/.Renviron')) readRenviron('~/.Renviron')
 library(shiny)
 library(shinythemes)
 library(shiny.router)
@@ -77,95 +78,123 @@ bottom_nav <- tagList(
 ui_home <- fluidPage(
   theme = shinytheme('cerulean'),
   tags$head(tags$style(HTML("
-    .pictogram-cell img:hover { opacity: 0.8; transform: scale(1.05);
-      transition: all 0.2s ease; cursor: pointer; }
     body { padding-bottom: 60px; }
+
+    /* ── Hero ── */
+    .home-hero { text-align: center; padding: 36px 0 12px; }
+    .home-logo-row { display: flex; align-items: center;
+                     justify-content: center; gap: 24px; margin-bottom: 10px;
+                     background: none; }
+    .home-logo-row img { background: none; border: none; box-shadow: none; }
+    .home-title { font-size: 26px; font-weight: 700;
+                  color: #1a3a5c; margin: 0 0 10px; }
+    .home-tagline { color: #444; font-size: 15px;
+                    max-width: 640px; margin: 0 auto 6px; }
+    .home-abbrev  { color: #888; font-size: 12px;
+                    max-width: 500px; margin: 0 auto 28px; line-height: 1.7; }
+
+    /* ── Primary action cards ── */
+    .home-primary { display: flex; justify-content: center;
+                    gap: 20px; flex-wrap: wrap; margin-bottom: 10px; }
+    .home-card {
+      display: flex; flex-direction: column; align-items: center;
+      width: 190px; padding: 22px 16px 18px;
+      background: #fff; border: 1px solid #d0dce8;
+      border-radius: 10px; text-decoration: none; color: #1a3a5c;
+      box-shadow: 0 2px 6px rgba(0,0,0,.07);
+      transition: box-shadow .18s, transform .18s, border-color .18s;
+    }
+    .home-card:hover {
+      box-shadow: 0 6px 18px rgba(0,0,0,.13);
+      transform: translateY(-3px); border-color: #2980b9;
+      text-decoration: none; color: #1a3a5c;
+    }
+    .home-card img { width: 100px; height: 100px; margin-bottom: 12px; }
+    .home-card-label { font-weight: 700; font-size: 15px; margin-bottom: 4px; }
+    .home-card-sub   { color: #888; font-size: 12px; text-align: center; }
+
+    /* ── Secondary nav links ── */
+    .home-secondary {
+      display: flex; justify-content: center;
+      gap: 28px; flex-wrap: wrap; margin-top: 114px; margin-bottom: 16px;
+    }
+    .home-sec-link {
+      display: flex; flex-direction: column; align-items: center;
+      text-decoration: none; color: #555;
+      transition: color .15s;
+    }
+    .home-sec-link:hover { color: #2980b9; text-decoration: none; }
+    .home-sec-link img { width: 52px; height: 52px;
+                         margin-bottom: 5px; opacity: .75; }
+    .home-sec-link:hover img { opacity: 1; }
+    .home-sec-label { font-size: 12px; font-weight: 600;
+                      text-align: center; max-width: 90px; }
   "))),
-  br(), br(),
-  fluidRow(
-    column(12, align = 'center',
-      img(src = 'Qres_DB_logo.png', height = '180px'),
-      h2('PHenotypic Analysis of Microbial Growth (PhaMiG)'),
-      p(style = 'color:#666; max-width:700px; margin:auto;',
-        'A DuckDB-powered database for microbial growth curve analysis — bacteria, yeast, and beyond.',
-        'Compare gcplyr, growthrates, DGrowthR, KinBiont.jl and more on the same raw data.'),
-      br(), br()
-    )
-  ),
 
-  # Row 1: Search | Metadata Preparation | Analyse
-  fluidRow(
-    column(4, align = 'center',
-      tags$a(href = route_link('search'),
-        tags$div(class = 'pictogram-cell',
-          img(src = 'search_parse2.png', height = '160px', width = '160px'),
-          tags$p(class = 'pictogram-caption', 'SEARCH & BROWSE')
-        )
+  tags$div(class = 'home-hero',
+
+    # ── Logos + title ──────────────────────────────────────────────────────
+    tags$div(class = 'home-logo-row',
+      img(src = 'PhaMiG_logo.png',  height = '90px', alt = 'PhaMiG logo',
+          style = 'display:block;'),
+      img(src = 'QresDB_logo.png',  height = '90px', alt = 'Qres DB logo',
+          style = 'display:block;')
+    ),
+
+    tags$h2(class = 'home-title',
+      'PhaMiG Platform', tags$span(style = 'font-weight:400; color:#2980b9;',
+      ' Powered by Qres DB')),
+
+    tags$p(class = 'home-tagline',
+      'A repository for microbial growth curves with integrated analysis and benchmarking tools.'),
+
+    tags$p(class = 'home-abbrev',
+      tags$strong('PhaMiG'), HTML(' &ndash; Phenotypic Analysis of Microbial Growth'),
+      tags$br(),
+      tags$strong('Qres DB'), HTML(' &ndash; Quantitative Dose–Response Database')
+    ),
+
+    # ── Three primary action cards ─────────────────────────────────────────
+    tags$div(class = 'home-primary',
+      tags$a(class = 'home-card', href = route_link('search'),
+        img(src = 'search_parse2.png', alt = 'Search'),
+        tags$span(class = 'home-card-label', 'Search Data'),
+        tags$span(class = 'home-card-sub',   'Find existing datasets.')
+      ),
+      tags$a(class = 'home-card', href = route_link('submit'),
+        img(src = 'submit2.png', alt = 'Submit'),
+        tags$span(class = 'home-card-label', 'Submit Data'),
+        tags$span(class = 'home-card-sub',   'Deposit new datasets.')
+      ),
+      tags$a(class = 'home-card', href = route_link('analyse'),
+        img(src = 'data_analysis2.png', alt = 'Analyze'),
+        tags$span(class = 'home-card-label', 'Analyze Data'),
+        tags$span(class = 'home-card-sub',   'Analyze uploaded growth curves.')
       )
     ),
-    column(4, align = 'center',
-      tags$a(href = route_link('metadata_prep'),
-        tags$div(class = 'pictogram-cell',
-          img(src = 'metadata_prep2.png', height = '160px', width = '160px'),
-          tags$p(class = 'pictogram-caption', 'METADATA PREPARATION')
-        )
-      )
-    ),
-    column(4, align = 'center',
-      tags$a(href = route_link('analyse'),
-        tags$div(class = 'pictogram-cell',
-          img(src = 'data_analysis2.png', height = '160px', width = '160px'),
-          tags$p(class = 'pictogram-caption', 'ANALYSE & COMPARE')
-        )
+
+    # ── Secondary nav ──────────────────────────────────────────────────────
+    tags$div(class = 'home-secondary',
+      tags$a(class = 'home-sec-link', href = route_link('metadata_prep'),
+        img(src = 'metadata_prep2.png', alt = 'Metadata Preparation'),
+        tags$span(class = 'home-sec-label', 'Metadata Preparation')
+      ),
+      tags$a(class = 'home-sec-link', href = route_link('ask'),
+        img(src = 'contact2.png', alt = 'Natural Language Query'),
+        tags$span(class = 'home-sec-label', 'Natural Language Query')
+      ),
+      tags$a(class = 'home-sec-link', href = route_link('plugins'),
+        img(src = 'project_development2.png', alt = 'Learn'),
+        tags$span(class = 'home-sec-label', 'Learn')
+      ),
+      tags$a(class = 'home-sec-link', href = route_link('acknowledgement'),
+        img(src = 'acknowledgement.png', alt = 'Acknowledgements'),
+        tags$span(class = 'home-sec-label', 'Acknowledgements')
       )
     )
+
   ),
 
-  br(), br(),
-
-  # Row 2: Submit | Develop | Contact/Ask
-  fluidRow(
-    column(4, align = 'center',
-      tags$a(href = route_link('submit'),
-        tags$div(class = 'pictogram-cell',
-          img(src = 'submit2.png', height = '160px', width = '160px'),
-          tags$p(class = 'pictogram-caption', 'SUBMIT DATA')
-        )
-      )
-    ),
-    column(4, align = 'center',
-      tags$a(href = route_link('plugins'),
-        tags$div(class = 'pictogram-cell',
-          img(src = 'project_development2.png', height = '160px', width = '160px'),
-          tags$p(class = 'pictogram-caption', 'DEVELOP & PLUGINS')
-        )
-      )
-    ),
-    column(4, align = 'center',
-      tags$a(href = route_link('ask'),
-        tags$div(class = 'pictogram-cell',
-          img(src = 'contact2.png', height = '160px', width = '160px'),
-          tags$p(class = 'pictogram-caption', 'CONTACT & NL QUERY')
-        )
-      )
-    )
-  ),
-
-  br(), br(),
-
-  # Row 3: Acknowledgements
-  fluidRow(
-    column(12, align = 'center',
-      tags$a(href = route_link('acknowledgement'),
-        tags$div(class = 'pictogram-cell',
-          img(src = 'acknowledgement.png', height = '140px', width = '140px'),
-          tags$p(class = 'pictogram-caption', 'ACKNOWLEDGEMENTS')
-        )
-      )
-    )
-  ),
-
-  br(), br(), br(),
   bottom_nav
 )
 
@@ -181,7 +210,11 @@ ui_metadata <- fluidPage(
                border-radius:4px; padding:10px; margin-bottom:8px; font-size:13px; }
   '))),
   fluidRow(
-    column(4, img(src = 'Qres_DB_logo.png', height = '80px')),
+    column(4, tags$span(
+  img(src = 'PhaMiG_logo.png',  height = '52px', alt = 'PhaMiG',
+      style = 'margin-right:8px;'),
+  img(src = 'QresDB_logo.png',  height = '52px', alt = 'Qres DB')
+)),
     column(8,
       h3('Metadata Template Preparation'),
       tags$div(class = 'alert alert-info', style = 'margin-bottom:0; font-size:13px; padding:10px 14px;',
@@ -453,7 +486,11 @@ ui_search <- fluidPage(
   ),
   fluidRow(
     column(4, align = 'left',
-      img(src = 'Qres_DB_logo.png', height = '80px')),
+      tags$span(
+  img(src = 'PhaMiG_logo.png',  height = '52px', alt = 'PhaMiG',
+      style = 'margin-right:8px;'),
+  img(src = 'QresDB_logo.png',  height = '52px', alt = 'Qres DB')
+)),
     column(8,
       h3('Search & Browse Datasets'))
   ),
@@ -605,8 +642,12 @@ ui_analyse <- fluidPage(
   theme = shinytheme('cerulean'),
   tags$head(tags$style(HTML('body { padding-bottom: 60px; }'))),
   fluidRow(
-    column(4, img(src = 'Qres_DB_logo.png', height = '80px')),
-    column(8, h3('Analyse & Compare Tools'))
+    column(4, tags$span(
+  img(src = 'PhaMiG_logo.png',  height = '52px', alt = 'PhaMiG',
+      style = 'margin-right:8px;'),
+  img(src = 'QresDB_logo.png',  height = '52px', alt = 'Qres DB')
+)),
+    column(8, h3('Analyze & Compare Tools'))
   ),
   hr(),
   fluidRow(
@@ -663,7 +704,11 @@ ui_ask <- fluidPage(
   theme = shinytheme('cerulean'),
   tags$head(tags$style(HTML('body { padding-bottom: 60px; }'))),
   fluidRow(
-    column(4, img(src = 'Qres_DB_logo.png', height = '80px')),
+    column(4, tags$span(
+  img(src = 'PhaMiG_logo.png',  height = '52px', alt = 'PhaMiG',
+      style = 'margin-right:8px;'),
+  img(src = 'QresDB_logo.png',  height = '52px', alt = 'Qres DB')
+)),
     column(8, h3('Ask in Natural Language'))
   ),
   hr(),
@@ -695,9 +740,9 @@ ui_ask <- fluidPage(
     tabPanel('Comparison plot',
       br(),
       selectInput('nl_metric_select', 'Metric to plot',
-        choices  = c('mumax_percapita', 'lag_time_h', 'doubling_time_h',
+        choices  = c('doubling_time_h', 'mumax_percapita', 'lag_time_h',
                      'auc_trapezoid', 'max_od', 'delta_od'),
-        selected = 'mumax_percapita'),
+        selected = 'doubling_time_h'),
       plotOutput('nl_comp_plot', height = '420px')),
     tabPanel('Growth curves',
       br(),
@@ -742,7 +787,11 @@ ui_submit <- fluidPage(
     }
   '))),
   fluidRow(
-    column(4, img(src = 'Qres_DB_logo.png', height = '80px')),
+    column(4, tags$span(
+  img(src = 'PhaMiG_logo.png',  height = '52px', alt = 'PhaMiG',
+      style = 'margin-right:8px;'),
+  img(src = 'QresDB_logo.png',  height = '52px', alt = 'Qres DB')
+)),
     column(8, h3('Submit Data & Manage Deposits'))
   ),
   hr(),
@@ -951,7 +1000,7 @@ ui_submit <- fluidPage(
               br(),
               checkboxInput('upload_run_analysis',
                 tagList('Run model_free analysis after upload',
-                  tip('Estimates doubling time, mumax, and AUC for all wells. Results appear in the Analyse tab. Takes 5–30 s.')),
+                  tip('Estimates doubling time, mumax, and AUC for all wells. Results appear in the Analyze tab. Takes 5–30 s.')),
                 value = TRUE)
             ),
             uiOutput('upload_progress_ui'),
@@ -1066,37 +1115,52 @@ ui_submit <- fluidPage(
 
     # ── TAB 3: Notes & observations ─────────────────────────────────────────
     tabPanel('Notes & observations',
+      tags$head(tags$style(HTML('
+        .admin-corner { position:absolute; top:8px; right:14px; z-index:20; }
+        .admin-corner a { color:#ccc; font-size:11px; text-decoration:none; }
+        .admin-corner a:hover { color:#888; }
+        .admin-badge { background:#e74c3c; color:#fff; border-radius:3px;
+                       padding:1px 5px; font-size:10px; margin-left:4px; }
+      '))),
       br(),
-      fluidRow(
-        column(12,
-          wellPanel(
-            h5('Submit a note, limitation, or bug observation'),
-            helpText('Stored locally and logged to file. The maintainer is notified by email.'),
-            fluidRow(
-              column(4,
-                selectInput('note_type', 'Type',
-                            choices = c('bug', 'limitation', 'observation',
-                                        'data_quality', 'feature_request'),
-                            width = '100%')
+      tags$div(style = 'position:relative;',
+        # Admin icon — top-right corner
+        tags$div(class = 'admin-corner',
+          actionLink('admin_notes_btn',
+            tagList(icon('lock', style='font-size:11px;'),
+                    tags$span(' admin')),
+            title = 'Admin login')
+        ),
+        fluidRow(
+          column(12,
+            wellPanel(
+              h5('Submit a note, limitation, or bug observation'),
+              helpText('Stored locally and logged to file. The maintainer is notified by email.'),
+              fluidRow(
+                column(4,
+                  selectInput('note_type', 'Type',
+                              choices = c('bug', 'limitation', 'observation',
+                                          'data_quality', 'feature_request'),
+                              width = '100%')
+                ),
+                column(8,
+                  textInput('note_author',
+                    opt_label('Your name or email', 'Optional. Used only to follow up if needed.'),
+                    width = '100%')
+                )
               ),
-              column(8,
-                textInput('note_author',
-                  opt_label('Your name or email', 'Optional. Used only to follow up if needed.'),
-                  width = '100%')
-              )
-            ),
-            textInput('note_dataset_id',
-              opt_label('Dataset ID', 'If the note relates to a specific dataset, enter its ID here.'),
-              width = '100%', placeholder = 'ecoli_MOPS_37C_2026_smith  (optional)'),
-            textAreaInput('note_text', 'Description', rows = 5, width = '100%',
-                          placeholder = 'Describe the issue, limitation, or observation…'),
-            actionButton('submit_note', 'Submit note', class = 'btn-warning', width = '100%')
+              textInput('note_dataset_id',
+                opt_label('Dataset ID', 'If the note relates to a specific dataset, enter its ID here.'),
+                width = '100%', placeholder = 'ecoli_MOPS_37C_2026_smith  (optional)'),
+              textAreaInput('note_text', 'Description', rows = 5, width = '100%',
+                            placeholder = 'Describe the issue, limitation, or observation…'),
+              actionButton('submit_note', 'Submit note', class = 'btn-warning', width = '100%')
+            )
           )
-        )
-      ),
-      br(),
-      h5('Submitted notes'),
-      DTOutput('notes_table')
+        ),
+        br(),
+        uiOutput('notes_section_ui')
+      )
     )
   ),
   bottom_nav
@@ -1107,7 +1171,11 @@ ui_plugins <- fluidPage(
   theme = shinytheme('cerulean'),
   tags$head(tags$style(HTML('body { padding-bottom: 60px; }'))),
   fluidRow(
-    column(4, img(src = 'Qres_DB_logo.png', height = '80px')),
+    column(4, tags$span(
+  img(src = 'PhaMiG_logo.png',  height = '52px', alt = 'PhaMiG',
+      style = 'margin-right:8px;'),
+  img(src = 'QresDB_logo.png',  height = '52px', alt = 'Qres DB')
+)),
     column(8, h3('Plugins & References'))
   ),
   hr(),
@@ -1164,7 +1232,11 @@ ui_acknowledgement <- fluidPage(
   theme = shinytheme('cerulean'),
   tags$head(tags$style(HTML('body { padding-bottom: 60px; }'))),
   fluidRow(
-    column(4, img(src = 'Qres_DB_logo.png', height = '80px')),
+    column(4, tags$span(
+  img(src = 'PhaMiG_logo.png',  height = '52px', alt = 'PhaMiG',
+      style = 'margin-right:8px;'),
+  img(src = 'QresDB_logo.png',  height = '52px', alt = 'Qres DB')
+)),
     column(8, h3('Acknowledgements'))
   ),
   hr(),
@@ -1854,9 +1926,15 @@ server <- function(input, output, session) {
   })
 
   output$comp_boxplot <- renderPlot({
-    req(nrow(comparison_result()) > 0)
-    qres_plot_metric_comparison(comparison_result(), metric = input$comp_metric,
-                                 facet_by = if (length(unique(comparison_result()$dataset_id)) > 1)
+    df <- comparison_result()
+    if (is.null(df) || nrow(df) == 0) {
+      return(ggplot2::ggplot() +
+        ggplot2::annotate('text', x = 0.5, y = 0.5, size = 5, colour = 'grey50',
+                          label = 'Click "Run comparison" to populate the plot.') +
+        ggplot2::theme_void())
+    }
+    qres_plot_metric_comparison(df, metric = input$comp_metric,
+                                 facet_by = if (length(unique(df$dataset_id)) > 1)
                                    'dataset_id' else NULL)
   })
 
@@ -2754,14 +2832,119 @@ server <- function(input, output, session) {
     showNotification('Note submitted — thank you!', type = 'message')
   })
 
+  # ── Notes admin ────────────────────────────────────────────────────────────
+  admin_auth      <- reactiveVal(FALSE)
+  notes_refresh   <- reactiveVal(0)
+
+  # Open login modal
+  observeEvent(input$admin_notes_btn, {
+    showModal(modalDialog(
+      title = tagList(icon('lock'), ' Admin login'),
+      textInput('admin_user', 'Username'),
+      passwordInput('admin_pwd', 'Password'),
+      footer = tagList(
+        modalButton('Cancel'),
+        actionButton('admin_login_btn', 'Login', class = 'btn-primary')
+      ),
+      easyClose = TRUE, size = 's'
+    ))
+  })
+
+  # Verify credentials — compared against ~/.Renviron hashes, never plain text
+  observeEvent(input$admin_login_btn, {
+    ok_user <- identical(trimws(input$admin_user),
+                         Sys.getenv('PHAMIG_ADMIN_USER', unset = ''))
+    ok_pwd  <- identical(qres_hash_passphrase(trimws(input$admin_pwd)),
+                         Sys.getenv('PHAMIG_ADMIN_PWD_HASH', unset = ''))
+    if (ok_user && ok_pwd) {
+      admin_auth(TRUE)
+      removeModal()
+      showNotification(tagList(icon('check'), ' Admin access granted.'),
+                       type = 'message', duration = 3)
+    } else {
+      showNotification('Incorrect username or password.', type = 'error', duration = 4)
+    }
+  })
+
+  # Delete a note (admin only)
+  observeEvent(input$admin_delete_note_id, {
+    req(admin_auth(), nzchar(input$admin_delete_note_id))
+    DBI::dbExecute(con, 'DELETE FROM user_note WHERE note_id = ?',
+                   params = list(input$admin_delete_note_id))
+    notes_refresh(notes_refresh() + 1)
+    showNotification('Note deleted.', type = 'message', duration = 2)
+  })
+
+  # Notes section: public or admin view
+  output$notes_section_ui <- renderUI({
+    if (admin_auth()) {
+      tagList(
+        tags$div(
+          tags$span(icon('shield-alt'),
+            tags$strong(' Admin view'),
+            tags$span(class = 'admin-badge', 'authenticated'),
+            style = 'color:#c0392b; margin-bottom:6px; display:block;'
+          ),
+          actionLink('admin_logout_btn',
+            tagList(icon('sign-out-alt', style='font-size:11px;'), ' log out'),
+            style = 'font-size:11px; color:#aaa;')
+        ),
+        br(),
+        DTOutput('notes_table_admin')
+      )
+    } else {
+      tagList(
+        h5('Submitted notes'),
+        DTOutput('notes_table')
+      )
+    }
+  })
+
+  observeEvent(input$admin_logout_btn, {
+    admin_auth(FALSE)
+    showNotification('Logged out.', type = 'message', duration = 2)
+  })
+
+  # Public notes table (truncated, no author)
   output$notes_table <- renderDT({
-    input$submit_note
+    input$submit_note; notes_refresh()
     qres_init_schema(con)
     if (!DBI::dbExistsTable(con, 'user_note')) return(datatable(data.frame()))
     datatable(
       DBI::dbGetQuery(con,
         'SELECT note_type, note_text, created_at FROM user_note ORDER BY created_at DESC'),
       options = list(pageLength = 10, scrollX = TRUE)
+    )
+  })
+
+  # Admin notes table — full text, author/email, delete buttons
+  output$notes_table_admin <- renderDT({
+    input$submit_note; notes_refresh()
+    if (!DBI::dbExistsTable(con, 'user_note')) return(datatable(data.frame()))
+    df <- DBI::dbGetQuery(con,
+      'SELECT note_id, note_type, author, dataset_id, note_text, created_at
+       FROM user_note ORDER BY created_at DESC')
+    df$delete <- sprintf(
+      '<button class="btn btn-danger btn-xs"
+         onclick="Shiny.setInputValue(\'admin_delete_note_id\', \'%s\', {priority:\'event\'})">
+         <i class=\"fa fa-trash\"></i></button>',
+      df$note_id
+    )
+    datatable(
+      df[, c('delete', 'note_type', 'author', 'dataset_id', 'note_text', 'created_at')],
+      escape   = FALSE,
+      rownames = FALSE,
+      colnames = c('', 'Type', 'Author / email', 'Dataset ID', 'Note', 'Submitted'),
+      options  = list(
+        pageLength = 25, scrollX = TRUE,
+        columnDefs = list(
+          list(width = '30px',  targets = 0),
+          list(width = '80px',  targets = 1),
+          list(width = '130px', targets = 2),
+          list(width = '140px', targets = 3),
+          list(width = '120px', targets = 5)
+        )
+      )
     )
   })
 
@@ -2880,6 +3063,13 @@ server <- function(input, output, session) {
     req(nl_result())
     df <- nl_result()$data
     if (is.null(df) || nrow(df) == 0) return(datatable(data.frame(message = 'No results.')))
+    # Reorder: dataset_id + raw_path first, then biological metadata
+    priority_cols <- intersect(c('dataset_id', 'raw_path', 'species', 'strain',
+                                  'medium_type', 'perturbation_type', 'perturbation',
+                                  'temperature_c', 'year', 'authors', 'doi'),
+                               names(df))
+    other_cols    <- setdiff(names(df), priority_cols)
+    df <- df[, c(priority_cols, other_cols), drop = FALSE]
     datatable(df, options = list(pageLength = 20, scrollX = TRUE))
   })
 
@@ -2887,7 +3077,7 @@ server <- function(input, output, session) {
     req(nl_result())
     res <- nl_result()
     if (res$type != 'comparison' || is.null(res$data) || nrow(res$data) == 0) return(NULL)
-    metric <- input$nl_metric_select %||% (res$metric %||% 'mumax_percapita')
+    metric <- input$nl_metric_select %||% (res$metric %||% 'doubling_time_h')
     qres_plot_metric_comparison(res$data, metric = metric,
                                  facet_by = if (length(unique(res$data$dataset_id)) > 1)
                                    'dataset_id' else NULL)

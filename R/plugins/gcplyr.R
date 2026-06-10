@@ -21,23 +21,20 @@ qres_plugin_gcplyr <- function(raw_long, metadata = NULL, params = list()) {
         t <- time_h
         y <- pmax(value - blank, 1e-6)
 
-        # gcplyr derivative on log-scale via calc_deriv
-        df_well <- data.frame(time = t, y = y)
-        deriv_df <- tryCatch(
-          gcplyr::calc_deriv(x = 'time', y = 'y', data = df_well,
-                              percapita = TRUE, blank = blank),
+        # gcplyr v1.12+ API: calc_deriv(y=vector, x=vector, ...)
+        deriv_vec <- tryCatch(
+          gcplyr::calc_deriv(y = y, x = t, percapita = TRUE, blank = blank),
           error = function(e) NULL
         )
 
-        if (!is.null(deriv_df) && 'deriv' %in% names(deriv_df)) {
-          mu    <- deriv_df$deriv
+        if (!is.null(deriv_vec) && is.numeric(deriv_vec)) {
+          mu    <- deriv_vec
           mumax <- max(mu, na.rm = TRUE)
           i_max <- which.max(mu)
           lag   <- if (length(i_max) && mumax > 0)
             t[i_max] - log(y[i_max] / y[1]) / mumax else NA_real_
           lag   <- ifelse(is.finite(lag) & lag >= 0, lag, NA_real_)
         } else {
-          # calc_deriv API mismatch — compute manually
           mu    <- .mf_per_capita(t, y, 0)
           mumax <- max(mu, na.rm = TRUE)
           lag   <- .mf_lag(t, mu, mumax, y[1], 0)
