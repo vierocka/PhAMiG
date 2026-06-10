@@ -17,20 +17,32 @@ OMNIPLATE_CONDA_BIN <- path.expand('~/miniconda3/bin/conda')
 .OMNIPLATE_CACHE$ready <- NA
 
 .omniplate_py_ready <- function() {
-  if (!is.na(.OMNIPLATE_CACHE$ready)) return(isTRUE(.OMNIPLATE_CACHE$ready))
-  if (!requireNamespace('reticulate', quietly = TRUE)) {
-    .OMNIPLATE_CACHE$ready <- FALSE; return(FALSE)
-  }
+  # Return TRUE immediately if already confirmed ready in this session.
+  if (isTRUE(.OMNIPLATE_CACHE$ready)) return(TRUE)
+  if (!requireNamespace('reticulate', quietly = TRUE)) return(FALSE)
+
+  conda_python <- file.path(
+    path.expand('~/miniconda3'), 'envs', OMNIPLATE_CONDA_ENV, 'bin', 'python')
+
   result <- tryCatch({
-    # Point reticulate at the conda env where omniplate is installed
-    conda_python <- file.path(
-      path.expand('~/miniconda3'), 'envs', OMNIPLATE_CONDA_ENV, 'bin', 'python')
-    if (file.exists(conda_python)) {
-      reticulate::use_python(conda_python, required = FALSE)
+    # If Python not yet started, point it at the conda env.
+    if (!reticulate::py_available(initialize = FALSE)) {
+      if (file.exists(conda_python)) {
+        reticulate::use_python(conda_python, required = FALSE)
+      } else {
+        reticulate::use_condaenv(OMNIPLATE_CONDA_ENV,
+                                  conda  = OMNIPLATE_CONDA_BIN,
+                                  required = FALSE)
+      }
     }
     reticulate::py_module_available('omniplate')
-  }, error = function(e) FALSE)
-  .OMNIPLATE_CACHE$ready <- isTRUE(result)
+  }, error = function(e) {
+    message('[omniplate] Python check failed: ', conditionMessage(e))
+    FALSE
+  })
+
+  # Only cache TRUE; let FALSE re-check on next call (env may not be ready yet).
+  if (isTRUE(result)) .OMNIPLATE_CACHE$ready <- TRUE
   isTRUE(result)
 }
 

@@ -768,6 +768,18 @@ ui_ask <- fluidPage(
       DTOutput('nl_table')),
     tabPanel('Comparison plot',
       br(),
+      tags$div(
+        tags$b('Baseline subtraction', style = 'font-size:13px;'),
+        tags$small(style = 'color:dimgray; margin-left:6px;',
+          '— Sprouffske & Wagner (2012), Hall et al. (2014), gcplyr / Mira et al. (2022)'),
+        br(),
+        radioButtons('nl_comp_baseline', NULL, inline = TRUE,
+          choices  = c('None' = 'none', 'Min per well' = 'min_well',
+                       'First 3 tp' = 'first_3', 'Blank wells' = 'blank_wells'),
+          selected = 'none'),
+        uiOutput('nl_comp_blank_note')
+      ),
+      hr(style = 'margin: 6px 0;'),
       fluidRow(
         column(4,
           selectInput('nl_metric_select', 'Metric',
@@ -3427,10 +3439,26 @@ server <- function(input, output, session) {
     ids
   })
 
+  output$nl_comp_blank_note <- renderUI({
+    req(input$nl_comp_baseline == 'blank_wells')
+    ids  <- nl_active_ids()
+    bids <- if (!is.null(ids) && length(ids) > 0)
+      tryCatch(qres_get_blank_wells(con, ids), error = function(e) character(0))
+    else character(0)
+    if (length(bids) > 0)
+      tags$small(style = 'color:#27ae60;',
+        icon('check'), sprintf(' %d blank well(s) found.', length(bids)))
+    else
+      tags$small(style = 'color:#e74c3c;',
+        icon('exclamation-triangle'),
+        ' No blank wells designated in these datasets. Select a different method.')
+  })
+
   output$nl_comp_plot <- renderPlot({
     req(nl_result())
-    res    <- nl_result()
-    metric <- input$nl_metric_select %||% 'doubling_time_h'
+    res      <- nl_result()
+    metric   <- input$nl_metric_select %||% 'doubling_time_h'
+    nl_bm    <- input$nl_comp_baseline %||% 'none'
 
     # LLM-returned comparison result (type='comparison')
     if (res$type == 'comparison' && !is.null(res$data) && nrow(res$data) > 0) {
@@ -3443,14 +3471,17 @@ server <- function(input, output, session) {
         'dataset_id' %in% names(res$data) && nrow(res$data) > 0) {
       user_sel <- length(input$nl_table_rows_selected) > 0
       ids <- nl_active_ids()
-      if (!user_sel) ids <- head(ids, 5)   # cap auto-mode for speed
+      if (!user_sel) ids <- head(ids, 5)
       if (length(ids) == 0) {
         return(ggplot2::ggplot() +
           ggplot2::annotate('text', x = .5, y = .5, size = 4.5, colour = 'grey50',
             label = 'No raw data registered for these datasets.') +
           ggplot2::theme_void())
       }
-      # Build label map from res$data (has species, temperature_c, perturbation_type, perturbation)
+      nl_blank_ids <- if (nl_bm == 'blank_wells')
+        tryCatch(qres_get_blank_wells(con, ids), error = function(e) character(0))
+      else character(0)
+
       .nl_label <- function(did) {
         row   <- res$data[res$data$dataset_id == did, ][1, ]
         sp    <- trimws(row$species %||% '')
@@ -3466,24 +3497,30 @@ server <- function(input, output, session) {
         if (show) lab <- paste0(lab, ' + ', pert)
         lab
       }
-      nl_tools        <- input$nl_comp_tools %||% c('model_free', 'gcplyr', 'growthrates')
-      nl_py_plugins   <- intersect(nl_tools, 'omniplate')
-      nl_r_plugins    <- setdiff(nl_tools, nl_py_plugins)
+      nl_tools      <- input$nl_comp_tools %||% c('model_free', 'gcplyr', 'growthrates')
+      nl_py_plugins <- intersect(nl_tools, 'omniplate')
+      nl_r_plugins  <- setdiff(nl_tools, nl_py_plugins)
       all_cmp <- lapply(ids, function(did) {
         raw <- tryCatch(qres_get_raw_curves(con, did), error = function(e) NULL)
         if (is.null(raw)) return(NULL)
-        # R plugins via compare (cached)
+        raw <- .apply_baseline(raw, method = nl_bm, blank_ids = nl_blank_ids)
         cmp <- tryCatch(
           qres_compare_plugin_outputs(raw, plugins = nl_r_plugins),
           error = function(e) NULL)
-        # omniplate on main thread
         if (length(nl_py_plugins) > 0) {
           py_cmp <- tryCatch({
-            res <- qres_run_plugin(raw, 'omniplate')
-            if (!is.null(res$derived_metrics) && nrow(res$derived_metrics) > 0)
-              dplyr::mutate(res$derived_metrics, tool = 'omniplate')
-            else NULL
-          }, error = function(e) NULL)
+            r <- qres_run_plugin(raw, 'omniplate')
+            if (!is.null(r$derived_metrics) && nrow(r$derived_metrics) > 0) {
+              dplyr::mutate(r$derived_metrics, tool = 'omniplate')
+            } else {
+              msg <- r$logs$message %||% 'no metrics returned'
+              message('[NL omniplate] ', did, ': ', msg)
+              NULL
+            }
+          }, error = function(e) {
+            message('[NL omniplate] ', did, ': ', conditionMessage(e))
+            NULL
+          })
           cmp <- dplyr::bind_rows(cmp, py_cmp)
         }
         if (!is.null(cmp) && nrow(cmp) > 0) {
@@ -3508,7 +3545,8 @@ server <- function(input, output, session) {
       ggplot2::annotate('text', x = .5, y = .5, size = 5, colour = 'grey50',
                         label = 'Run a query to populate the comparison plot.') +
       ggplot2::theme_void()
-  }) |> bindCache(nl_active_ids(), input$nl_metric_select, input$nl_comp_tools)
+  }) |> bindCache(nl_active_ids(), input$nl_metric_select, input$nl_comp_tools,
+                  input$nl_comp_baseline)
 
   output$nl_curves_panel <- renderUI({
     ids <- nl_active_ids()
@@ -3522,16 +3560,12 @@ server <- function(input, output, session) {
         tags$b('Baseline subtraction', style = 'font-size:13px;'),
         tags$small(style = 'color:dimgray; margin-left:6px;',
           '— Sprouffske & Wagner (2012), Hall et al. (2014), gcplyr / Mira et al. (2022)'),
-        tags$br(),
-        tags$small(style = 'color:#888; font-size:11px;',
-          'Note: curves panel applies correction to display only. ',
-          'For corrected fitting, set baseline in the Analyse → Compare sidebar before running.'),
         br(),
         radioButtons('nl_baseline', NULL, choices = baseline_choices,
                      selected = 'none', inline = TRUE),
-        if (!has_blanks && FALSE)   # placeholder; shown only when blank_wells selected
-          tags$small(style='color:#e74c3c;', icon('exclamation-triangle'),
-                     ' No blank wells designated.')
+        if (!has_blanks)
+          tags$small(style = 'color:#888; font-size:11px;',
+            icon('info-circle'), ' No blank wells designated in these datasets.')
       ),
       fluidRow(
         column(2, checkboxInput('nl_log_y', 'Log y', FALSE))
