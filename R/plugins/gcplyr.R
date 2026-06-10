@@ -21,9 +21,11 @@ qres_plugin_gcplyr <- function(raw_long, metadata = NULL, params = list()) {
         t <- time_h
         y <- pmax(value - blank, 1e-6)
 
-        # gcplyr v1.12+ API: calc_deriv(y=vector, x=vector, ...)
+        # gcplyr v1.12+ vector API; suppress "called outside mutate" warning
         deriv_vec <- tryCatch(
-          gcplyr::calc_deriv(y = y, x = t, percapita = TRUE, blank = blank),
+          suppressWarnings(
+            gcplyr::calc_deriv(y = y, x = t, percapita = TRUE, blank = blank)
+          ),
           error = function(e) NULL
         )
 

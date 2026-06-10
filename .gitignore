@@ -46,3 +46,4 @@ Thumbs.db
 # www/              ← static assets (images, CSS)
 # inst/             ← installation helpers
 # Dockerfile        ← container definition
+data/.plugin_cache/

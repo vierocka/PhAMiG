@@ -2,10 +2,15 @@ if (file.exists('~/.Renviron')) readRenviron('~/.Renviron')
 library(shiny)
 library(shinythemes)
 library(shiny.router)
+library(shinycssloaders)
 library(DT)
 library(DBI)
 library(duckdb)
 library(ggplot2)
+library(future)
+library(promises)
+library(memoise)
+plan(multisession, workers = 2)
 # LLM backends: ellmer handles Anthropic + ollama; mall for batch column ops
 if (requireNamespace('ellmer', quietly = TRUE)) library(ellmer)
 if (requireNamespace('mall',   quietly = TRUE)) library(mall)
@@ -540,7 +545,7 @@ ui_search <- fluidPage(
       selectInput('plugin',
         tagList('Plugin', tip('model_free: fast, no model assumptions. gcplyr/growthrates: standard R packages. DGrowthR: Gaussian process. KinBiont.jl: Julia (needs Julia 1.11+). omniplate: Python via reticulate (needs conda env omniplate_env).')),
         choices = c('model_free', 'gcplyr', 'growthrates',
-                    'dgrothr', 'kinbiont', 'omniplate')),
+                    'DGrowthR' = 'dgrothr', 'KinBiont' = 'kinbiont', 'omniplate')),
       conditionalPanel("input.plugin == 'kinbiont'",
         tags$small(
           icon('circle-info'), ' KinBiont.jl: log-linear growth modelling in Julia.',
@@ -664,8 +669,10 @@ ui_analyse <- fluidPage(
         h5('Tools to compare'),
         checkboxGroupInput('comp_tools', NULL,
           choices  = c('model_free', 'gcplyr', 'growthrates',
-                       'dgrothr', 'kinbiont', 'omniplate'),
+                       'DGrowthR' = 'dgrothr', 'KinBiont' = 'kinbiont', 'omniplate'),
           selected = c('model_free', 'gcplyr', 'growthrates')),
+        tags$small(style = 'color: dimgray;',
+          icon('hourglass-half'), ' DGrowthR (GP) and KinBiont (Julia) take 30 s–3 min per dataset.'),
         selectInput('comp_metric', 'Primary metric',
           choices  = c('doubling_time_h', 'mumax_percapita', 'lag_time_h',
                        'auc_trapezoid', 'max_od', 'delta_od', 'asymptote_od',
@@ -680,7 +687,7 @@ ui_analyse <- fluidPage(
     column(9,
       tabsetPanel(
         tabPanel('Box plot',
-          br(), plotOutput('comp_boxplot', height = '420px')),
+          br(), withSpinner(plotOutput('comp_boxplot', height = '420px'), type = 6, color = '#5b9bd5')),
         tabPanel('Growth curves (overlay)',
           br(),
           uiOutput('comp_curves_panel')),
@@ -692,7 +699,7 @@ ui_analyse <- fluidPage(
             column(6, selectInput('scatter_x', 'X tool', choices = NULL)),
             column(6, selectInput('scatter_y', 'Y tool', choices = NULL))
           ),
-          plotOutput('comp_scatter', height = '380px'))
+          withSpinner(plotOutput('comp_scatter', height = '380px'), type = 6, color = '#5b9bd5'))
       )
     )
   ),
@@ -750,11 +757,13 @@ ui_ask <- fluidPage(
         column(8,
           checkboxGroupInput('nl_comp_tools', 'Tools',
             choices  = c('model_free', 'gcplyr', 'growthrates',
-                         'dgrothr', 'kinbiont', 'omniplate'),
+                         'DGrowthR' = 'dgrothr', 'KinBiont' = 'kinbiont', 'omniplate'),
             selected = c('model_free', 'gcplyr', 'growthrates'),
-            inline   = TRUE))
+            inline   = TRUE),
+          tags$small(style = 'color: dimgray;',
+            icon('hourglass-half'), ' DGrowthR (GP) and KinBiont (Julia) are slow — 30 s–3 min per dataset.'))
       ),
-      plotOutput('nl_comp_plot', height = '420px')),
+      withSpinner(plotOutput('nl_comp_plot', height = '420px'), type = 6, color = '#5b9bd5')),
     tabPanel('Growth curves',
       br(),
       uiOutput('nl_curves_panel'))

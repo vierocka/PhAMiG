@@ -1,3 +1,40 @@
+# Disk cache for expensive plugin results (DGrowthR, KinBiont).
+# Keyed by digest of dataset ids + plugin name.  Valid 14 days, max 300 MB.
+.PLUGIN_CACHE <- local({
+  cache_dir <- file.path(getwd(), 'data', '.plugin_cache')
+  if (!dir.exists(cache_dir)) dir.create(cache_dir, recursive = TRUE)
+  tryCatch(
+    cachem::cache_disk(dir = cache_dir, max_size = 300 * 1024^2,
+                       max_age = 14 * 24 * 3600),
+    error = function(e) {
+      message('[cache] Could not init disk cache: ', conditionMessage(e), ' — caching disabled.')
+      cachem::cache_null()
+    }
+  )
+})
+
+.SLOW_PLUGINS <- c('dgrothr', 'kinbiont')
+
+.run_plugin_maybe_cached <- function(raw_long, plugin, params = list(), metadata = NULL) {
+  if (!plugin %in% .SLOW_PLUGINS || !requireNamespace('digest', quietly = TRUE)) {
+    return(qres_run_plugin(raw_long, plugin, params, metadata))
+  }
+  key <- digest::digest(list(
+    plugin = plugin,
+    ids    = sort(unique(raw_long$dataset_id)),
+    nrow   = nrow(raw_long),
+    params = params
+  ))
+  if (.PLUGIN_CACHE$exists(key)) {
+    message('[cache] Hit: ', plugin, ' on ',
+            paste(sort(unique(raw_long$dataset_id)), collapse = ', '))
+    return(.PLUGIN_CACHE$get(key))
+  }
+  result <- qres_run_plugin(raw_long, plugin, params, metadata)
+  .PLUGIN_CACHE$set(key, result)
+  result
+}
+
 QRES_PLUGINS <- data.frame(
   plugin      = c('model_free', 'gcplyr', 'growthrates', 'dgrothr', 'kinbiont', 'omniplate'),
   label       = c('Model-free (baseline)', 'gcplyr', 'growthrates', 'DGrowthR', 'KinBiont.jl', 'omniplate'),
@@ -76,7 +113,7 @@ qres_compare_plugin_outputs <- function(raw_long, plugins = c('model_free', 'gcp
   requireNamespace('dplyr')
   results <- lapply(plugins, function(p) {
     res <- tryCatch(
-      qres_run_plugin(raw_long, p, params),
+      .run_plugin_maybe_cached(raw_long, p, params),
       error = function(e) {
         message('[compare] Plugin ', p, ' failed: ', conditionMessage(e))
         list(derived_metrics = data.frame())
