@@ -20,11 +20,12 @@ QRES_KEY_METRICS <- c('mumax_percapita', 'lag_time_h', 'doubling_time_h', 'auc_t
 }
 
 qres_plot_metric_comparison <- function(comparison_df, metric = 'mumax_percapita',
-                                         facet_by = NULL) {
+                                         facet_by = NULL, log_y = FALSE) {
   requireNamespace('ggplot2')
   requireNamespace('dplyr')
 
   df <- dplyr::filter(comparison_df, metric_name == metric, is.finite(metric_value))
+  if (isTRUE(log_y)) df <- df[df$metric_value > 0, ]
   df <- .relabel_tools(df)
   if (nrow(df) == 0) {
     return(ggplot2::ggplot() +
@@ -49,6 +50,7 @@ qres_plot_metric_comparison <- function(comparison_df, metric = 'mumax_percapita
     p <- p + ggplot2::facet_wrap(stats::as.formula(paste('~', facet_by)),
                                    scales = 'free_y')
   }
+  if (isTRUE(log_y)) p <- p + ggplot2::scale_y_log10()
   p
 }
 

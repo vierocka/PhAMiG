@@ -845,6 +845,7 @@ ui_ask <- fluidPage(
             icon('hourglass-half'), ' DGrowthR (GP) and KinBiont (Julia) are slow — 30 s–3 min per dataset.'))
       ),
       withSpinner(plotOutput('nl_comp_plot', height = '420px'), type = 6, color = '#5b9bd5'),
+      fluidRow(column(2, checkboxInput('nl_comp_log_y', 'Log y (plot)', FALSE))),
       br(),
       fluidRow(
         column(12,
@@ -2361,7 +2362,11 @@ server <- function(input, output, session) {
     if (length(ids) == 0 && !has_up)
       return(tags$div(style = 'color:dimgray; padding:30px; text-align:center;',
         icon('arrow-left'), ' Select datasets in the Datasets tab to view growth curves.'))
-    ctrl_ids <- input$comp_upload_controls %||% character(0)
+    blank_ids_db <- if (length(ids) > 0)
+      tryCatch(qres_get_blank_wells(con, ids), error = function(e) character(0))
+    else character(0)
+    blank_ids_up <- if (has_up) input$comp_upload_blanks %||% character(0) else character(0)
+    has_blanks   <- length(c(blank_ids_db, blank_ids_up)) > 0
     tagList(
       tags$div(
         tags$b('Baseline subtraction', style = 'font-size:13px;'),
@@ -2371,7 +2376,10 @@ server <- function(input, output, session) {
         radioButtons('comp_curves_baseline', NULL, inline = TRUE,
           choices  = c('None' = 'none', 'Min per well' = 'min_well',
                        'First 3 tp' = 'first_3', 'Blank wells' = 'blank_wells'),
-          selected = 'none')
+          selected = 'none'),
+        if (!has_blanks)
+          tags$small(style = 'color:#888; font-size:11px;',
+            icon('info-circle'), ' No blank wells designated in these datasets.')
       ),
       fluidRow(column(2, checkboxInput('comp_log_y', 'Log y', FALSE))),
       withSpinner(plotOutput('comp_curves', height = '420px'), type = 6, color = '#5b9bd5')
@@ -2435,6 +2443,7 @@ server <- function(input, output, session) {
             ' DGrowthR (GP) and KinBiont (Julia) are slow — 30 s–3 min per dataset.'))
       ),
       withSpinner(plotOutput('comp_boxplot', height = '420px'), type = 6, color = '#5b9bd5'),
+      fluidRow(column(2, checkboxInput('comp_boxplot_log_y', 'Log y (plot)', FALSE))),
       br(),
       fluidRow(
         column(12,
@@ -2464,7 +2473,7 @@ server <- function(input, output, session) {
         icon('check'), sprintf(' %d blank well(s) found.', length(bids)))
     else
       tags$small(style = 'color:#e74c3c;', icon('exclamation-triangle'),
-        ' No blank wells designated. Select a different method.')
+        ' No blank wells designated in these datasets. Select a different method.')
   })
 
   output$comp_boxplot <- renderPlot({
@@ -2478,10 +2487,12 @@ server <- function(input, output, session) {
     }
     facet_col <- if ('plot_label' %in% names(combined)) 'plot_label' else 'dataset_id'
     qres_plot_metric_comparison(combined, metric = metric,
-      facet_by = if (length(unique(combined[[facet_col]])) > 1) facet_col else NULL)
+      facet_by = if (length(unique(combined[[facet_col]])) > 1) facet_col else NULL,
+      log_y    = isTRUE(input$comp_boxplot_log_y))
   }) |> bindCache(comp_active_ids(), comp_has_upload(),
                   input$comp_upload_well_dt_rows_selected,
-                  input$comp_tools, input$comp_baseline, input$comp_metric)
+                  input$comp_tools, input$comp_baseline,
+                  input$comp_metric, input$comp_boxplot_log_y)
 
   output$comp_params_table <- DT::renderDT({
     wide <- .comp_wide_analyse()
@@ -2511,11 +2522,11 @@ server <- function(input, output, session) {
   output$comp_email_ui <- renderUI({
     msg <- comp_email_status()
     if (!nzchar(msg)) return(NULL)
-    fluidRow(style = 'margin-top:6px;',
-      column(7, textInput('comp_email_addr', NULL,
-        value = Sys.getenv('PHAMIG_ADMIN_EMAIL', unset = ''),
-        placeholder = 'your@email.com')),
-      column(5, tags$small(style = 'color:#555;', textOutput('comp_email_status')))
+    tags$div(style = 'margin-top:8px; max-width:400px;',
+      tags$p(style = 'color:#555; font-size:12px; margin:0 0 4px;', msg),
+      textInput('comp_email_addr', NULL,
+        value       = Sys.getenv('PHAMIG_ADMIN_EMAIL', unset = ''),
+        placeholder = 'your@email.com')
     )
   })
 
@@ -3839,9 +3850,11 @@ server <- function(input, output, session) {
     }
     facet_col <- if ('plot_label' %in% names(combined)) 'plot_label' else 'dataset_id'
     qres_plot_metric_comparison(combined, metric = metric,
-      facet_by = if (length(unique(combined[[facet_col]])) > 1) facet_col else NULL)
+      facet_by = if (length(unique(combined[[facet_col]])) > 1) facet_col else NULL,
+      log_y    = isTRUE(input$nl_comp_log_y))
   }) |> bindCache(nl_active_ids(), input$nl_table_rows_selected,
-                  input$nl_comp_tools, input$nl_comp_baseline, input$nl_metric_select)
+                  input$nl_comp_tools, input$nl_comp_baseline,
+                  input$nl_metric_select, input$nl_comp_log_y)
 
   # ── Wide table: one row per (dataset × well), columns = tool__metric ─────────
   .nl_comp_wide <- reactive({
