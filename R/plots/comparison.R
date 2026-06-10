@@ -4,12 +4,29 @@
 
 QRES_KEY_METRICS <- c('mumax_percapita', 'lag_time_h', 'doubling_time_h', 'auc_trapezoid')
 
+.TOOL_LABELS <- c(
+  model_free  = 'model_free',
+  gcplyr      = 'gcplyr',
+  growthrates = 'growthrates',
+  dgrothr     = 'DGrowthR',
+  kinbiont    = 'KinBiont',
+  omniplate   = 'omniplate'
+)
+
+.relabel_tools <- function(df) {
+  if ('tool' %in% names(df))
+    df$tool <- ifelse(df$tool %in% names(.TOOL_LABELS),
+                      .TOOL_LABELS[df$tool], df$tool)
+  df
+}
+
 qres_plot_metric_comparison <- function(comparison_df, metric = 'mumax_percapita',
                                          facet_by = NULL) {
   requireNamespace('ggplot2')
   requireNamespace('dplyr')
 
   df <- dplyr::filter(comparison_df, metric_name == metric, is.finite(metric_value))
+  df <- .relabel_tools(df)
   if (nrow(df) == 0) {
     return(ggplot2::ggplot() +
       ggplot2::annotate('text', x=.5, y=.5, label=paste('No data for metric:', metric)) +
@@ -50,16 +67,22 @@ qres_pivot_comparison <- function(comparison_df, metric = 'mumax_percapita') {
 qres_plot_tool_scatter <- function(comparison_df, tool_x, tool_y,
                                     metric = 'mumax_percapita') {
   requireNamespace('ggplot2')
-  wide <- qres_pivot_comparison(comparison_df, metric)
-  if (!all(c(tool_x, tool_y) %in% names(wide))) {
+  wide <- qres_pivot_comparison(.relabel_tools(comparison_df), metric)
+  lx <- .TOOL_LABELS[tool_x] %||% tool_x
+  ly <- .TOOL_LABELS[tool_y] %||% tool_y
+  # column names after relabelling
+  cx <- if (lx %in% names(wide)) lx else tool_x
+  cy <- if (ly %in% names(wide)) ly else tool_y
+  if (!all(c(cx, cy) %in% names(wide))) {
     return(ggplot2::ggplot() +
       ggplot2::annotate('text', x=.5, y=.5, label='Tool not available in results') +
       ggplot2::theme_void())
   }
-  ggplot2::ggplot(wide, ggplot2::aes(x = .data[[tool_x]], y = .data[[tool_y]])) +
+  ggplot2::ggplot(wide, ggplot2::aes(x = .data[[cx]], y = .data[[cy]])) +
     ggplot2::geom_point(alpha = 0.6) +
     ggplot2::geom_abline(slope = 1, intercept = 0, linetype = 'dashed', colour = 'grey50') +
     ggplot2::theme_bw(base_size = 12) +
-    ggplot2::labs(x = paste(tool_x, metric), y = paste(tool_y, metric),
-                  title = paste(tool_x, 'vs', tool_y, '—', metric))
+    ggplot2::labs(x = paste(lx, '[', metric, ']'),
+                  y = paste(ly, '[', metric, ']'),
+                  title = paste(lx, 'vs', ly, '—', metric))
 }
