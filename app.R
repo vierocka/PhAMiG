@@ -1891,14 +1891,22 @@ server <- function(input, output, session) {
       )
 
       # Build human-readable label: "E. coli 37°C" or "E. coli 37°C + rifampicin"
-      .mk_label <- function(sp, tc, pert) {
-        lab  <- paste0(if (nzchar(sp %||% '')) sp else '?', ' ', round(tc, 1), '°C')
-        pert <- trimws(pert %||% '')
-        if (nzchar(pert) && !tolower(pert) %in% c('none', 'na')) lab <- paste0(lab, ' + ', pert)
+      # Skip perturbation for temperature/none types — it would just repeat the °C value.
+      .mk_label <- function(sp, tc, ptype, pert) {
+        lab   <- paste0(if (nzchar(sp %||% '')) sp else '?', ' ', round(tc, 1), '°C')
+        pert  <- trimws(pert  %||% '')
+        ptype <- tolower(trimws(ptype %||% ''))
+        show  <- nzchar(pert) &&
+                 !tolower(pert) %in% c('none', 'na', '') &&
+                 !ptype %in% c('temperature', 'none', '') &&
+                 is.na(suppressWarnings(as.numeric(pert)))  # skip bare numbers
+        if (show) lab <- paste0(lab, ' + ', pert)
         lab
       }
       label_map <- setNames(
-        mapply(.mk_label, filtered$species, filtered$temperature_c, filtered$perturbation %||% ''),
+        mapply(.mk_label,
+               filtered$species, filtered$temperature_c,
+               filtered$perturbation_type %||% '', filtered$perturbation %||% ''),
         filtered$dataset_id
       )
 
@@ -3158,15 +3166,20 @@ server <- function(input, output, session) {
             label = 'No raw data registered for these datasets.') +
           ggplot2::theme_void())
       }
-      # Build label map from res$data (has species, temperature_c, perturbation)
+      # Build label map from res$data (has species, temperature_c, perturbation_type, perturbation)
       .nl_label <- function(did) {
-        row  <- res$data[res$data$dataset_id == did, ][1, ]
-        sp   <- row$species %||% ''
-        tc   <- row$temperature_c %||% NA
-        pert <- trimws(row$perturbation %||% '')
-        lab  <- paste0(if (nzchar(sp)) sp else did,
-                       if (is.finite(as.numeric(tc))) paste0(' ', round(as.numeric(tc), 1), '°C') else '')
-        if (nzchar(pert) && !tolower(pert) %in% c('none', 'na')) lab <- paste0(lab, ' + ', pert)
+        row   <- res$data[res$data$dataset_id == did, ][1, ]
+        sp    <- trimws(row$species %||% '')
+        tc    <- row$temperature_c %||% NA
+        ptype <- tolower(trimws(row$perturbation_type %||% ''))
+        pert  <- trimws(row$perturbation %||% '')
+        lab   <- paste0(if (nzchar(sp)) sp else did,
+                        if (is.finite(as.numeric(tc))) paste0(' ', round(as.numeric(tc), 1), '°C') else '')
+        show  <- nzchar(pert) &&
+                 !tolower(pert) %in% c('none', 'na', '') &&
+                 !ptype %in% c('temperature', 'none', '') &&
+                 is.na(suppressWarnings(as.numeric(pert)))
+        if (show) lab <- paste0(lab, ' + ', pert)
         lab
       }
       all_cmp <- lapply(ids, function(did) {
@@ -3223,13 +3236,17 @@ server <- function(input, output, session) {
         df$dataset_id <- did
         # Attach label from NL result metadata if available
         if ('dataset_id' %in% names(res$data)) {
-          row  <- res$data[res$data$dataset_id == did, ][1, ]
-          sp   <- trimws(row$species %||% '')
-          tc   <- row$temperature_c %||% NA
-          pert <- trimws(row$perturbation %||% '')
-          lab  <- paste0(if (nzchar(sp)) sp else did,
-                         if (is.finite(as.numeric(tc))) paste0(' ', round(as.numeric(tc), 1), '°C') else '')
-          if (nzchar(pert) && !tolower(pert) %in% c('none', 'na')) lab <- paste0(lab, ' + ', pert)
+          row   <- res$data[res$data$dataset_id == did, ][1, ]
+          sp    <- trimws(row$species %||% '')
+          tc    <- row$temperature_c %||% NA
+          ptype <- tolower(trimws(row$perturbation_type %||% ''))
+          pert  <- trimws(row$perturbation %||% '')
+          lab   <- paste0(if (nzchar(sp)) sp else did,
+                          if (is.finite(as.numeric(tc))) paste0(' ', round(as.numeric(tc), 1), '°C') else '')
+          show  <- nzchar(pert) && !tolower(pert) %in% c('none', 'na', '') &&
+                   !ptype %in% c('temperature', 'none', '') &&
+                   is.na(suppressWarnings(as.numeric(pert)))
+          if (show) lab <- paste0(lab, ' + ', pert)
           df$plot_label <- lab
         }
         df
