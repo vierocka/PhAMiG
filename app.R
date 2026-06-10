@@ -671,7 +671,7 @@ ui_analyse <- fluidPage(
         selectizeInput('comp_species', 'Species', choices = NULL,
                        options = list(placeholder = 'all species')),
         conditionalPanel(
-          "input.comp_species !== null && input.comp_species !== ''",
+          "output.comp_strain_visible === true",
           selectizeInput('comp_strain', 'Strain', choices = NULL,
                          options = list(placeholder = 'all strains'))
         ),
@@ -686,7 +686,7 @@ ui_analyse <- fluidPage(
                          options = list(placeholder = 'all'))
         ),
         br(),
-        actionButton('comp_filter', 'Search', class = 'btn-primary', width = '100%')
+        uiOutput('comp_search_btn')
       )
     ),
 
@@ -710,7 +710,9 @@ ui_analyse <- fluidPage(
               icon('circle-info'),
               ' Column 1 = time (h), remaining = wells (A1, B2…).',
               tags$br(),
-              downloadLink('comp_demo_dl', 'Download demo file'))
+              actionButton('show_comp_demo', 'Demo file',
+                           class = 'btn btn-xs btn-info', icon = icon('table'),
+                           style = 'margin-top:4px;'))
           ),
           column(5, br(), uiOutput('comp_upload_status'))
         ),
@@ -1988,13 +1990,65 @@ server <- function(input, output, session) {
   })
 
   # ── Analyse page — cascade observers ─────────────────────────────────────
+
+  # Author → narrows species list
+  observeEvent(input$comp_author, {
+    au <- input$comp_author %||% ''
+    sp_choices <- if (nzchar(au)) {
+      tryCatch({
+        rows <- DBI::dbGetQuery(con,
+          "SELECT DISTINCT w.species
+           FROM dataset d
+           LEFT JOIN plate p USING(dataset_id)
+           LEFT JOIN well_metadata w USING(plate_id)
+           WHERE lower(coalesce(d.authors,'')) LIKE lower(?)
+             AND w.species IS NOT NULL
+           ORDER BY w.species",
+          params = list(paste0('%', au, '%')))
+        c('', rows$species[nzchar(rows$species)])
+      }, error = function(e) c(''))
+    } else {
+      c('', tryCatch(qres_get_distinct_species(con), error = function(e) character(0)))
+    }
+    updateSelectizeInput(session, 'comp_species', choices = sp_choices,
+                         selected = '', server = TRUE)
+  }, ignoreInit = TRUE)
+
+  # Species → strain (only populate when strains exist)
   observeEvent(input$comp_species, {
     sp <- input$comp_species %||% ''
-    choices <- if (nzchar(sp))
-      c('', tryCatch(qres_get_distinct_strains(con, sp), error = function(e) character(0)))
-    else c('')
-    updateSelectizeInput(session, 'comp_strain', choices = choices, server = TRUE)
+    strains <- if (nzchar(sp))
+      tryCatch(qres_get_distinct_strains(con, sp), error = function(e) character(0))
+    else character(0)
+    updateSelectizeInput(session, 'comp_strain',
+                         choices  = c('', strains),
+                         selected = '',
+                         server   = TRUE)
   }, ignoreInit = TRUE)
+
+  # Show strain selector only when the selected species has strains in the DB
+  output$comp_strain_visible <- reactive({
+    sp <- input$comp_species %||% ''
+    if (!nzchar(sp)) return(FALSE)
+    strains <- tryCatch(qres_get_distinct_strains(con, sp), error = function(e) character(0))
+    length(strains) > 0
+  })
+  outputOptions(output, 'comp_strain_visible', suspendWhenHidden = FALSE)
+
+  # Dynamic Search button — requires at least one filter or a valid upload
+  output$comp_search_btn <- renderUI({
+    has_filter <- nzchar(input$comp_author      %||% '') ||
+                  nzchar(input$comp_species     %||% '') ||
+                  nzchar(input$comp_medium      %||% '') ||
+                  nzchar(input$comp_perturb_type %||% '')
+    enabled <- has_filter || isTRUE(comp_upload_valid())
+    if (enabled)
+      actionButton('comp_filter', 'Search', class = 'btn-primary', width = '100%')
+    else
+      tags$button('Search', disabled = NA, class = 'btn btn-primary',
+                  style = 'width:100%; cursor:not-allowed; opacity:0.55;',
+                  title = 'Select at least one filter, or upload a file above')
+  })
 
   observeEvent(input$comp_perturb_type, {
     pt <- input$comp_perturb_type %||% ''
@@ -2042,19 +2096,58 @@ server <- function(input, output, session) {
   output$comp_upload_ready <- reactive({ isTRUE(comp_upload_valid()) })
   outputOptions(output, 'comp_upload_ready', suspendWhenHidden = FALSE)
 
-  output$comp_demo_dl <- downloadHandler(
-    filename = function() 'demo_growth_curves.csv',
+  observeEvent(input$show_comp_demo, {
+    demo_path <- 'data/raw_csv/raw_data_template.csv'
+    df <- tryCatch(
+      utils::read.csv(demo_path, check.names = FALSE, stringsAsFactors = FALSE),
+      error = function(e) NULL)
+    showModal(modalDialog(
+      title     = tagList(icon('table'), ' Growth curves CSV — format reference'),
+      size      = 'l',
+      easyClose = TRUE,
+      footer    = tagList(
+        downloadButton('download_comp_demo_raw', 'Download template',
+                       class = 'btn-success btn-sm'),
+        modalButton('Close')
+      ),
+      tags$div(class = 'alert alert-info',
+               style = 'font-size:13px; padding:8px 12px; margin-bottom:10px;',
+        tags$strong('Required format:'), ' First column = ', tags$code('time_h'),
+        ' (decimal hours). Remaining columns = well names ',
+        tags$code('A1'), ', ', tags$code('A2'), ' … ', tags$code('H12'),
+        ' containing OD values. One row per time point.',
+        tags$br(),
+        if (!is.null(df))
+          tags$span(style = 'color:#31708f;',
+            'Preview: first 5 rows × first 7 columns (',
+            paste0(nrow(df), ' time points, ', ncol(df) - 1, ' wells'), ').')
+        else tags$span(style = 'color:#a94442;', 'Template file not found.')
+      ),
+      if (!is.null(df)) {
+        preview <- df[seq_len(min(5, nrow(df))), seq_len(min(7, ncol(df))), drop = FALSE]
+        tableOutput('comp_demo_table')
+      }
+    ))
+    if (!is.null(df)) {
+      preview <- df[seq_len(min(5, nrow(df))), seq_len(min(7, ncol(df))), drop = FALSE]
+      output$comp_demo_table <- renderTable(preview, striped = TRUE, bordered = TRUE,
+                                            spacing = 'xs', align = 'c')
+    }
+  })
+  output$download_comp_demo_raw <- downloadHandler(
+    filename = 'demo_growth_curves.csv',
     content  = function(file) {
-      demo <- tryCatch(
-        utils::read.csv('data/raw_csv/raw_data_template.csv', check.names = FALSE),
-        error = function(e) {
-          # Minimal synthetic demo if template missing
-          t <- seq(0, 24, by = 0.5)
-          df <- data.frame(time_h = t)
-          for (w in c('A1','A2','B1','B2')) df[[w]] <- 0.01 + 0.5 * (1 - exp(-0.2 * t)) + rnorm(length(t), 0, 0.005)
-          df
-        })
-      utils::write.csv(demo, file, row.names = FALSE)
+      demo_path <- 'data/raw_csv/raw_data_template.csv'
+      if (file.exists(demo_path)) {
+        file.copy(demo_path, file)
+      } else {
+        t  <- seq(0, 24, by = 0.5)
+        df <- data.frame(time_h = t)
+        for (w in c('A1', 'A2', 'B1', 'B2'))
+          df[[w]] <- round(0.01 + 0.5 * (1 - exp(-0.2 * t)) +
+                             stats::rnorm(length(t), 0, 0.005), 4)
+        utils::write.csv(df, file, row.names = FALSE)
+      }
     }
   )
 
