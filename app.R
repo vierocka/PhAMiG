@@ -644,80 +644,125 @@ ui_search <- fluidPage(
 # ── ANALYSE & COMPARE ─────────────────────────────────────────────────────────
 ui_analyse <- fluidPage(
   theme = shinytheme('cerulean'),
-  tags$head(tags$style(HTML('body { padding-bottom: 60px; }'))),
+  tags$head(tags$style(HTML('body { padding-bottom: 60px; }
+    details > summary { cursor: pointer; list-style: none; }
+    details > summary::-webkit-details-marker { display: none; }
+    details > summary::marker { display: none; }
+    .upload-summary { font-weight: bold; color: #337ab7; font-size: 14px; }
+    .upload-summary:hover { color: #23527c; }
+  '))),
   fluidRow(
-    column(4, tags$span(
-  img(src = 'PhaMiG_logo.png',  height = '52px', alt = 'PhaMiG',
-      style = 'margin-right:8px;'),
-  img(src = 'QresDB_logo.png',  height = '52px', alt = 'Qres DB')
-)),
-    column(8, h3('Analyze & Compare Tools'))
+    column(4,
+      img(src = 'PhaMiG_logo.png', height = '52px', alt = 'PhaMiG',
+          style = 'margin-right:8px; vertical-align:middle;'),
+      img(src = 'QresDB_logo.png', height = '52px', alt = 'Qres DB',
+          style = 'vertical-align:middle;')
+    ),
+    column(8, h3('Analyze Data'))
   ),
   hr(),
   fluidRow(
+    # ── Sidebar ───────────────────────────────────────────────────────────────
     column(3,
       wellPanel(
         h5('Filter datasets'),
+        selectizeInput('comp_author', 'Author', choices = NULL,
+                       options = list(placeholder = 'all authors')),
         selectizeInput('comp_species', 'Species', choices = NULL,
                        options = list(placeholder = 'all species')),
-        sliderInput('comp_temp', 'Temperature range (°C)',
-                    min = 0, max = 60, value = c(25, 45), step = 1),
-        textInput('comp_medium', 'Medium contains',
-                  placeholder = 'e.g. LB, MOPS, M9'),
-        hr(),
-        h5('Tools to compare'),
-        checkboxGroupInput('comp_tools', NULL,
-          choices  = c('model_free', 'gcplyr', 'growthrates',
-                       'DGrowthR' = 'dgrothr', 'KinBiont' = 'kinbiont'),
-          selected = c('model_free', 'gcplyr', 'growthrates')),
-        tags$small(style = 'color: dimgray;',
-          icon('hourglass-half'), ' DGrowthR (GP) and KinBiont (Julia) take 30 s–3 min per dataset.'),
-        selectInput('comp_metric', 'Primary metric',
-          choices  = c('doubling_time_h', 'mumax_percapita', 'lag_time_h',
-                       'auc_trapezoid', 'max_od', 'delta_od', 'asymptote_od',
-                       'max_death_rate'),
-          selected = 'doubling_time_h'),
-        hr(),
-        tags$div(
-          tags$b('Baseline subtraction'),
-          tip(paste(
-            'Sprouffske & Wagner (2012): subtract per-well minimum OD.',
-            'Hall et al. (2014): subtract mean of first 3 timepoints.',
-            'Mira et al. (2022) / gcplyr: subtract per-timepoint mean of designated blank wells.',
-            'Applied to raw data before fitting AND display — improves cross-dataset comparability.'
-          ))
+        conditionalPanel(
+          "input.comp_species !== null && input.comp_species !== ''",
+          selectizeInput('comp_strain', 'Strain', choices = NULL,
+                         options = list(placeholder = 'all strains'))
         ),
-        radioButtons('comp_baseline', NULL, inline = TRUE,
-          choices = c(
-            'None'              = 'none',
-            'Min per well'      = 'min_well',
-            'First 3 tp'        = 'first_3',
-            'Blank wells'       = 'blank_wells'
-          ),
-          selected = 'none'),
-        uiOutput('comp_blank_note'),
-        actionButton('run_comparison', 'Run comparison', width = '100%',
-                     class = 'btn-success'),
-        br(), br(),
-        uiOutput('comp_status_ui')
+        sliderInput('comp_temp', 'Temperature (°C)',
+                    min = 0, max = 60, value = c(25, 45), step = 1),
+        textInput('comp_medium', 'Medium', placeholder = 'e.g. LB, MOPS, M9'),
+        selectizeInput('comp_perturb_type', 'Perturbation type', choices = NULL,
+                       options = list(placeholder = 'all types')),
+        conditionalPanel(
+          "input.comp_perturb_type !== null && input.comp_perturb_type !== ''",
+          selectizeInput('comp_perturb_val', 'Perturbation', choices = NULL,
+                         options = list(placeholder = 'all'))
+        ),
+        br(),
+        actionButton('comp_filter', 'Search', class = 'btn-primary', width = '100%')
       )
     ),
+
+    # ── Main panel ────────────────────────────────────────────────────────────
     column(9,
-      tabsetPanel(
-        tabPanel('Box plot',
-          br(), withSpinner(plotOutput('comp_boxplot', height = '420px'), type = 6, color = '#5b9bd5')),
-        tabPanel('Growth curves (overlay)',
-          br(),
-          uiOutput('comp_curves_panel')),
-        tabPanel('Metrics table',
-          br(), DTOutput('comp_table')),
-        tabPanel('Pairwise scatter',
+      # Upload section (collapsible)
+      tags$details(
+        style = 'margin-bottom:14px; border:1px solid #ddd; border-radius:4px; padding:10px;',
+        tags$summary(
+          class = 'upload-summary',
+          icon('upload'), ' Upload your own growth curves',
+          tags$small(style = 'font-weight:normal; color:#777; margin-left:8px;',
+            '(optional — can be combined with database datasets)')
+        ),
+        br(),
+        fluidRow(
+          column(7,
+            fileInput('comp_upload_file', NULL, accept = c('.csv', '.tsv', 'text/csv'),
+                      placeholder = 'Choose OD CSV file'),
+            tags$small(style = 'color:#777;',
+              icon('circle-info'),
+              ' Column 1 = time (h), remaining = wells (A1, B2…).',
+              tags$br(),
+              downloadLink('comp_demo_dl', 'Download demo file'))
+          ),
+          column(5, br(), uiOutput('comp_upload_status'))
+        ),
+        # Shown only after valid upload
+        conditionalPanel(
+          'output.comp_upload_ready === true',
+          hr(),
+          fluidRow(
+            column(6,
+              tags$b('Select wells to analyze', style = 'font-size:12px;'),
+              br(), br(),
+              DT::DTOutput('comp_upload_well_dt')
+            ),
+            column(6,
+              withSpinner(plotOutput('comp_upload_preview', height = '190px'),
+                          type = 6, color = '#5b9bd5')
+            )
+          ),
           br(),
           fluidRow(
-            column(6, selectInput('scatter_x', 'X tool', choices = NULL)),
-            column(6, selectInput('scatter_y', 'Y tool', choices = NULL))
-          ),
-          withSpinner(plotOutput('comp_scatter', height = '380px'), type = 6, color = '#5b9bd5'))
+            column(6,
+              selectizeInput('comp_upload_blanks', 'Blank wells (background subtraction)',
+                             choices = NULL, multiple = TRUE,
+                             options = list(placeholder = 'none selected'))
+            ),
+            column(6,
+              selectizeInput('comp_upload_controls', 'Control wells (shown in black)',
+                             choices = NULL, multiple = TRUE,
+                             options = list(placeholder = 'none selected'))
+            )
+          )
+        )
+      ),
+
+      # Tabs
+      tabsetPanel(id = 'analyse_tabs',
+        tabPanel('Datasets',
+          br(),
+          tags$small(style = 'color:dimgray;',
+            icon('hand-pointer'), ' Click rows to select datasets for analysis.',
+            ' Select at least one to unlock the Growth curves and Comparison plot tabs.'),
+          br(), br(),
+          DT::DTOutput('comp_filtered_dt')
+        ),
+        tabPanel('Growth curves',
+          br(),
+          uiOutput('comp_curves_ui')
+        ),
+        tabPanel('Comparison plot',
+          br(),
+          uiOutput('comp_comparison_ui')
+        )
       )
     )
   ),
@@ -1359,19 +1404,28 @@ server <- function(input, output, session) {
 
   selected_dataset  <- reactiveVal(NULL)
   dataset_results   <- reactiveVal(data.frame())
-  comparison_result <- reactiveVal(data.frame())
-  comp_raw_long     <- reactiveVal(NULL)
-  comp_status_msg    <- reactiveVal('')
-  comp_show_email    <- reactiveVal(FALSE)
-  comp_last_datasets <- reactiveVal(character(0))  # dataset_ids from last run
+  comp_filtered_rv  <- reactiveVal(data.frame())   # result of DB filter query
+  comp_upload_rv    <- reactiveVal(NULL)            # validated upload (long format)
+  comp_upload_valid <- reactiveVal(FALSE)           # upload passed validation
+  comp_email_status <- reactiveVal('')
 
-  # ── Auto-load on startup — show existing DB data without clicking Initialize
+  # ── Auto-load on startup — populate filter dropdowns and search results ──────
   session$onFlushed(function() {
     rows <- tryCatch({
-      qres_migrate_schema(con)   # patch any missing columns silently
+      qres_migrate_schema(con)
       qres_search_datasets(con)
     }, error = function(e) data.frame())
     if (nrow(rows) > 0) dataset_results(rows)
+    # Populate Analyse page filter dropdowns
+    tryCatch({
+      updateSelectizeInput(session, 'comp_author',
+                           choices = c('', qres_get_distinct_authors(con)), server = TRUE)
+      updateSelectizeInput(session, 'comp_species',
+                           choices = c('', qres_get_distinct_species(con)), server = TRUE)
+      updateSelectizeInput(session, 'comp_perturb_type',
+                           choices = c('', qres_get_distinct_perturbation_types(con)),
+                           server = TRUE)
+    }, error = function(e) NULL)
   }, once = TRUE)
 
   # ── Initialize DB ──────────────────────────────────────────────────────────
@@ -1407,6 +1461,11 @@ server <- function(input, output, session) {
       species_list <- qres_get_distinct_species(con)
       updateSelectizeInput(session, 'comp_species',
                            choices = c('', species_list), server = TRUE)
+      updateSelectizeInput(session, 'comp_author',
+                           choices = c('', qres_get_distinct_authors(con)), server = TRUE)
+      updateSelectizeInput(session, 'comp_perturb_type',
+                           choices = c('', qres_get_distinct_perturbation_types(con)),
+                           server = TRUE)
 
       temp_range <- qres_get_temp_range(con)
       if (all(is.finite(temp_range))) {
@@ -1928,291 +1987,473 @@ server <- function(input, output, session) {
     qres_plot_endpoint_heatmap(raw_long())
   })
 
-  # ── Comparison status + email panel ────────────────────────────────────────
-  output$comp_status_ui <- renderUI({
-    msg   <- comp_status_msg()
-    show  <- comp_show_email()
-    items <- list()
-    if (nzchar(msg)) items <- c(items, list(
-      tags$p(style = 'font-size:12px; color:#555; margin-top:6px;', msg)
-    ))
-    if (show) items <- c(items, list(
-      hr(),
-      tags$p(style = 'font-size:12px; color:#555;',
-        icon('envelope'),
-        ' Email these results to yourself:'),
-      fluidRow(
-        column(8, textInput('comp_email_addr', NULL,
-          value       = Sys.getenv('PHAMIG_ADMIN_EMAIL', unset = ''),
-          placeholder = 'your@email.com')),
-        column(4, actionButton('send_comp_email', 'Send',
-          class = 'btn-default btn-sm', style = 'margin-top:3px;'))
+  # ── Analyse page — cascade observers ─────────────────────────────────────
+  observeEvent(input$comp_species, {
+    sp <- input$comp_species %||% ''
+    choices <- if (nzchar(sp))
+      c('', tryCatch(qres_get_distinct_strains(con, sp), error = function(e) character(0)))
+    else c('')
+    updateSelectizeInput(session, 'comp_strain', choices = choices, server = TRUE)
+  }, ignoreInit = TRUE)
+
+  observeEvent(input$comp_perturb_type, {
+    pt <- input$comp_perturb_type %||% ''
+    choices <- if (nzchar(pt))
+      c('', tryCatch(qres_get_distinct_perturbations(con, pt), error = function(e) character(0)))
+    else c('')
+    updateSelectizeInput(session, 'comp_perturb_val', choices = choices, server = TRUE)
+  }, ignoreInit = TRUE)
+
+  # ── Filter button → comp_filtered_rv ──────────────────────────────────────
+  observeEvent(input$comp_filter, {
+    result <- tryCatch(
+      qres_filter_datasets(
+        con,
+        species          = if (nzchar(input$comp_species %||% ''))       input$comp_species       else NULL,
+        strain           = if (nzchar(input$comp_strain %||% ''))         input$comp_strain        else NULL,
+        temp_min         = input$comp_temp[1],
+        temp_max         = input$comp_temp[2],
+        medium           = if (nzchar(input$comp_medium %||% ''))         input$comp_medium        else NULL,
+        perturbation_type = if (nzchar(input$comp_perturb_type %||% '')) input$comp_perturb_type  else NULL,
+        perturbation      = if (nzchar(input$comp_perturb_val %||% ''))  input$comp_perturb_val   else NULL,
+        author           = if (nzchar(input$comp_author %||% ''))         input$comp_author        else NULL,
+        registered_only  = TRUE
       ),
-      textOutput('comp_email_status')
-    ))
-    if (length(items)) tagList(items) else NULL
+      error = function(e) data.frame()
+    )
+    # Apply strain post-hoc if needed (already handled above, but safety net)
+    comp_filtered_rv(result)
   })
 
-  # ── Comparison (multi-dataset, multi-tool) — async ──────────────────────────
-  observeEvent(input$run_comparison, {
-    req(length(input$comp_tools) >= 1)
-    comp_show_email(FALSE)
+  output$comp_filtered_dt <- DT::renderDT({
+    df <- comp_filtered_rv()
+    if (nrow(df) == 0)
+      return(DT::datatable(
+        data.frame(Note = 'Click Search in the sidebar to find datasets.'),
+        rownames = FALSE, options = list(dom = 't')))
+    show <- intersect(c('dataset_id', 'species', 'strain', 'temperature_c',
+                         'medium_type', 'perturbation', 'year', 'authors'), names(df))
+    DT::datatable(df[, show, drop = FALSE],
+      rownames  = FALSE, selection = 'multiple', filter = 'top',
+      options   = list(pageLength = 15, scrollX = TRUE))
+  }, server = TRUE)
 
-    # All DB reads happen on the main thread (DuckDB exclusive connection).
-    filtered <- qres_filter_datasets(
-      con,
-      species         = if (nzchar(input$comp_species %||% '')) input$comp_species else NULL,
-      temp_min        = input$comp_temp[1],
-      temp_max        = input$comp_temp[2],
-      medium          = if (nzchar(input$comp_medium %||% '')) input$comp_medium else NULL,
-      registered_only = TRUE
-    )
+  # ── Upload pipeline ────────────────────────────────────────────────────────
+  output$comp_upload_ready <- reactive({ isTRUE(comp_upload_valid()) })
+  outputOptions(output, 'comp_upload_ready', suspendWhenHidden = FALSE)
 
-    if (nrow(filtered) == 0) {
-      comp_status_msg('No registered datasets match the current filters.')
-      comparison_result(data.frame())
+  output$comp_demo_dl <- downloadHandler(
+    filename = function() 'demo_growth_curves.csv',
+    content  = function(file) {
+      demo <- tryCatch(
+        utils::read.csv('data/raw_csv/raw_data_template.csv', check.names = FALSE),
+        error = function(e) {
+          # Minimal synthetic demo if template missing
+          t <- seq(0, 24, by = 0.5)
+          df <- data.frame(time_h = t)
+          for (w in c('A1','A2','B1','B2')) df[[w]] <- 0.01 + 0.5 * (1 - exp(-0.2 * t)) + rnorm(length(t), 0, 0.005)
+          df
+        })
+      utils::write.csv(demo, file, row.names = FALSE)
+    }
+  )
+
+  observeEvent(input$comp_upload_file, {
+    req(input$comp_upload_file)
+    path <- input$comp_upload_file$datapath
+    check <- tryCatch(qres_validate_raw_csv(path), error = function(e) list(ok = FALSE, issues = conditionMessage(e)))
+    if (!isTRUE(check$ok)) {
+      comp_upload_valid(FALSE)
+      comp_upload_rv(NULL)
       return()
     }
+    long <- tryCatch(
+      qres_raw_to_long(path, dataset_id = '__upload__'),
+      error = function(e) NULL)
+    if (is.null(long) || nrow(long) == 0) { comp_upload_valid(FALSE); return() }
+    comp_upload_rv(as.data.frame(long))
+    comp_upload_valid(TRUE)
+    wells <- unique(long$well)
+    updateSelectizeInput(session, 'comp_upload_blanks',   choices = wells, server = TRUE)
+    updateSelectizeInput(session, 'comp_upload_controls', choices = wells, server = TRUE)
+  })
 
-    # Estimate wall-clock time so the user knows what to expect.
-    .secs_per_tool <- c(model_free = 1, gcplyr = 2, growthrates = 3,
-                        dgrothr = 45, kinbiont = 120)
-    tools_selected <- input$comp_tools
-    total_sec <- nrow(filtered) *
-      sum(.secs_per_tool[intersect(tools_selected, names(.secs_per_tool))], na.rm = TRUE)
-    .eta <- if (total_sec < 30)  'a few seconds'
-            else if (total_sec < 90)  paste0('about ', round(total_sec / 60, 1), ' min')
-            else paste0('up to ', ceiling(total_sec / 60), ' min')
-    cache_note <- if (any(c('dgrothr', 'kinbiont') %in% tools_selected))
-      ' Previously computed datasets are cached — re-runs are instant.' else ''
-    comp_status_msg(paste0(
-      'Running ', length(tools_selected), ' tool(s) on ', nrow(filtered),
-      ' dataset(s). Estimated time: ', .eta, '.', cache_note,
-      ' The UI stays responsive — check back or switch tabs freely.'
-    ))
-    comparison_result(data.frame())
-    comp_last_datasets(filtered$dataset_id)
+  output$comp_upload_status <- renderUI({
+    req(input$comp_upload_file)
+    if (isTRUE(comp_upload_valid()))
+      tags$small(style = 'color:#27ae60;', icon('check'),
+        sprintf(' Valid — %d wells, %d time-points.',
+                length(unique(comp_upload_rv()$well)),
+                length(unique(comp_upload_rv()$time_h))))
+    else
+      tags$small(style = 'color:#e74c3c;', icon('times'), ' Invalid format — check column names.')
+  })
 
-    # Build human-readable labels (main thread: uses filtered metadata).
-    .mk_label <- function(sp, tc, ptype, pert) {
-      lab   <- paste0(if (nzchar(sp %||% '')) sp else '?', ' ', round(tc, 1), '°C')
-      pert  <- trimws(pert  %||% '')
-      ptype <- tolower(trimws(ptype %||% ''))
-      show  <- nzchar(pert) &&
-               !tolower(pert) %in% c('none', 'na', '') &&
+  output$comp_upload_well_dt <- DT::renderDT({
+    req(comp_upload_valid())
+    raw   <- comp_upload_rv()
+    wells <- unique(raw$well)
+    DT::datatable(
+      data.frame(Well = wells, stringsAsFactors = FALSE),
+      rownames = FALSE, selection = list(mode = 'multiple', selected = seq_along(wells)),
+      options  = list(dom = 'tp', pageLength = 20, scrollY = '200px', scrollCollapse = TRUE))
+  }, server = FALSE)
+
+  output$comp_upload_preview <- renderPlot({
+    req(comp_upload_valid())
+    raw  <- comp_upload_rv()
+    sel  <- input$comp_upload_well_dt_rows_selected
+    if (!is.null(sel) && length(sel) > 0) {
+      wells <- unique(raw$well)[sel]
+      raw   <- raw[raw$well %in% wells, ]
+    }
+    ctrl <- input$comp_upload_controls %||% character(0)
+    ctrl_ids <- raw$well_id[raw$well %in% ctrl]
+    qres_plot_growth(raw, log_y = FALSE, control_wells = ctrl_ids,
+                     title = 'Uploaded curves')
+  })
+
+  # ── Active dataset IDs (DB selection) + upload flag ───────────────────────
+  comp_active_ids <- reactive({
+    sel <- input$comp_filtered_dt_rows_selected
+    if (length(sel) == 0) return(character(0))
+    df <- comp_filtered_rv()
+    if (nrow(df) == 0) return(character(0))
+    df$dataset_id[sel]
+  })
+
+  comp_has_upload <- reactive({
+    isTRUE(comp_upload_valid()) &&
+    !is.null(comp_upload_rv()) &&
+    length(input$comp_upload_well_dt_rows_selected) > 0
+  })
+
+  # ── Combined raw data (for growth curves) ──────────────────────────────────
+  comp_all_raw <- reactive({
+    db_ids <- comp_active_ids()
+    has_up <- comp_has_upload()
+    req(length(db_ids) > 0 || has_up)
+
+    df_meta <- comp_filtered_rv()
+    .label <- function(did) {
+      if (nrow(df_meta) == 0 || !did %in% df_meta$dataset_id) return(did)
+      row   <- df_meta[df_meta$dataset_id == did, ][1, ]
+      sp    <- trimws(row$species %||% '')
+      tc    <- row$temperature_c %||% NA
+      ptype <- tolower(trimws(row$perturbation_type %||% ''))
+      pert  <- trimws(row$perturbation %||% '')
+      lab   <- paste0(if (nzchar(sp)) sp else did,
+                      if (is.finite(as.numeric(tc))) paste0(' ', round(as.numeric(tc), 1), '°C') else '')
+      show  <- nzchar(pert) && !tolower(pert) %in% c('none', 'na', '') &&
                !ptype %in% c('temperature', 'none', '') &&
                is.na(suppressWarnings(as.numeric(pert)))
       if (show) lab <- paste0(lab, ' + ', pert)
       lab
     }
-    label_map <- setNames(
-      mapply(.mk_label,
-             filtered$species, filtered$temperature_c,
-             filtered$perturbation_type %||% '', filtered$perturbation %||% ''),
-      filtered$dataset_id
-    )
 
-    # Baseline correction: fetch blank wells if needed, then apply to raw data.
-    .baseline   <- input$comp_baseline %||% 'none'
-    .blank_ids  <- if (.baseline == 'blank_wells')
-      tryCatch(qres_get_blank_wells(con, filtered$dataset_id), error = function(e) character(0))
-    else character(0)
-
-    # Read all raw parquet files on main thread (needs DB + memoised file read).
-    all_raw <- lapply(filtered$dataset_id, function(did) {
+    raw_list <- lapply(db_ids, function(did) {
       raw <- tryCatch(qres_get_raw_curves(con, did), error = function(e) NULL)
-      if (is.null(raw)) return(NULL)
-      raw <- .apply_baseline(raw, method = .baseline, blank_ids = .blank_ids)
-      raw$temperature_c <- filtered$temperature_c[filtered$dataset_id == did][1]
-      raw$plot_label    <- label_map[[did]]
+      if (!is.null(raw)) raw$plot_label <- .label(did)
       raw
     })
-    names(all_raw) <- filtered$dataset_id
 
-    # Freeze copies for the worker (no reactive access inside future).
-    .filtered  <- filtered
-    .label_map <- label_map
-    .all_raw   <- all_raw
-    .tools     <- tools_selected
-
-    # All selected plugins run in a background worker — UI stays live.
-    future_promise({
-      all_metrics <- lapply(seq_len(nrow(.filtered)), function(i) {
-        did   <- .filtered$dataset_id[i]
-        raw   <- .all_raw[[did]]
-        if (is.null(raw)) return(NULL)
-        cmp <- tryCatch(
-          qres_compare_plugin_outputs(raw, plugins = .tools),
-          error = function(e) NULL
-        )
-        if (!is.null(cmp) && nrow(cmp) > 0) {
-          cmp$temperature_c <- .filtered$temperature_c[i]
-          cmp$dataset_id    <- did
-          cmp$plot_label    <- .label_map[[did]]
-        }
-        cmp
-      })
-      list(
-        metrics = dplyr::bind_rows(Filter(Negate(is.null), all_metrics)),
-        raws    = dplyr::bind_rows(Filter(Negate(is.null), .all_raw))
-      )
-    }) %...>% (function(result) {
-      all_metrics <- result$metrics
-      comparison_result(all_metrics)
-      comp_raw_long(result$raws)
-      comp_show_email(TRUE)
-      n_m <- nrow(all_metrics); n_d <- length(unique(all_metrics$dataset_id))
-      tools_got   <- unique(all_metrics$tool)
-      tools_asked <- .tools
-      tools_miss  <- setdiff(tools_asked, tools_got)
-      miss_note   <- if (length(tools_miss) > 0)
-        paste0(' ⚠ No results from: ', paste(tools_miss, collapse = ', '),
-               ' (check console for errors, or try a different metric).')
-      else ''
-      comp_status_msg(paste0(
-        '✓ Done — ', n_m, ' metric rows across ', n_d, ' dataset(s). ',
-        'Tools with results: ', paste(tools_got, collapse = ', '), '.', miss_note
-      ))
-      avail_tools <- tools_got
-      updateSelectInput(session, 'scatter_x', choices = avail_tools, selected = avail_tools[1])
-      updateSelectInput(session, 'scatter_y', choices = avail_tools,
-                        selected = avail_tools[min(2, length(avail_tools))])
-    }) %...!% (function(e) {
-      comp_status_msg(paste0('⚠ Error: ', conditionMessage(e)))
-    })
-
-    NULL  # return immediately; computation continues in the background
-  })
-
-  output$comp_boxplot <- renderPlot({
-    df <- comparison_result()
-    if (is.null(df) || nrow(df) == 0) {
-      return(ggplot2::ggplot() +
-        ggplot2::annotate('text', x = 0.5, y = 0.5, size = 5, colour = 'grey50',
-                          label = 'Click "Run comparison" to populate the plot.') +
-        ggplot2::theme_void())
+    if (has_up) {
+      raw_up <- comp_upload_rv()
+      sel_r  <- input$comp_upload_well_dt_rows_selected
+      if (!is.null(sel_r) && length(sel_r) > 0) {
+        wells  <- unique(raw_up$well)[sel_r]
+        raw_up <- raw_up[raw_up$well %in% wells, ]
+      }
+      raw_up$plot_label <- 'Uploaded data'
+      raw_list <- c(raw_list, list(raw_up))
     }
-    facet_col <- if ('plot_label' %in% names(df)) 'plot_label' else 'dataset_id'
-    qres_plot_metric_comparison(df, metric = input$comp_metric,
-                                 facet_by = if (length(unique(df[[facet_col]])) > 1)
-                                   facet_col else NULL)
-  }) |> bindCache(comparison_result(), input$comp_metric)
 
-  output$comp_blank_note <- renderUI({
-    req(input$comp_baseline == 'blank_wells')
-    dids <- comp_last_datasets()
-    bids <- if (length(dids) > 0)
-      tryCatch(qres_get_blank_wells(con, dids), error = function(e) character(0))
-    else character(0)
-    if (length(bids) > 0)
-      tags$small(style = 'color:#27ae60;',
-        icon('check'), sprintf(' %d blank well(s) found.', length(bids)))
-    else
-      tags$small(style = 'color:#e74c3c;',
-        icon('exclamation-triangle'),
-        ' No blank wells designated in these datasets. Select a different method.')
+    dplyr::bind_rows(Filter(Negate(is.null), raw_list))
   })
 
-  output$comp_curves_panel <- renderUI({
-    raw <- comp_raw_long()
-    if (is.null(raw) || nrow(raw) == 0) return(NULL)
-    baseline_used <- input$comp_baseline %||% 'none'
-    note <- if (baseline_used != 'none')
-      tags$small(style = 'color:#27ae60; margin-left:10px;',
-        icon('check'), ' Baseline corrected (', baseline_used, ') — same as used for fitting.')
-    else NULL
+  # ── Metrics reactive (shared between boxplot and table) ─────────────────────
+  comp_metrics_long <- reactive({
+    db_ids <- comp_active_ids()
+    has_up <- comp_has_upload()
+    req(length(db_ids) > 0 || has_up)
+
+    nl_bm    <- input$comp_baseline %||% 'none'
+    nl_tools <- input$comp_tools %||% c('model_free', 'gcplyr', 'growthrates')
+    all_ids  <- c(if (has_up) '__upload__' else character(0), db_ids)
+
+    nl_blank_ids <- character(0)
+    if (nl_bm == 'blank_wells') {
+      if (length(db_ids) > 0)
+        nl_blank_ids <- c(nl_blank_ids,
+          tryCatch(qres_get_blank_wells(con, db_ids), error = function(e) character(0)))
+      if (has_up)
+        nl_blank_ids <- c(nl_blank_ids, input$comp_upload_blanks %||% character(0))
+    }
+
+    df_meta <- comp_filtered_rv()
+    .label <- function(did) {
+      if (did == '__upload__') return('Uploaded data')
+      if (nrow(df_meta) == 0 || !did %in% df_meta$dataset_id) return(did)
+      row   <- df_meta[df_meta$dataset_id == did, ][1, ]
+      sp    <- trimws(row$species %||% '')
+      tc    <- row$temperature_c %||% NA
+      ptype <- tolower(trimws(row$perturbation_type %||% ''))
+      pert  <- trimws(row$perturbation %||% '')
+      lab   <- paste0(if (nzchar(sp)) sp else did,
+                      if (is.finite(as.numeric(tc))) paste0(' ', round(as.numeric(tc), 1), '°C') else '')
+      show  <- nzchar(pert) && !tolower(pert) %in% c('none', 'na', '') &&
+               !ptype %in% c('temperature', 'none', '') &&
+               is.na(suppressWarnings(as.numeric(pert)))
+      if (show) lab <- paste0(lab, ' + ', pert)
+      lab
+    }
+
+    all_cmp <- lapply(all_ids, function(did) {
+      if (did == '__upload__') {
+        raw  <- comp_upload_rv()
+        selr <- input$comp_upload_well_dt_rows_selected
+        if (!is.null(selr) && length(selr) > 0) {
+          wells <- unique(raw$well)[selr]
+          raw   <- raw[raw$well %in% wells, ]
+        }
+      } else {
+        raw <- tryCatch(qres_get_raw_curves(con, did), error = function(e) NULL)
+      }
+      if (is.null(raw) || nrow(raw) == 0) return(NULL)
+      raw <- .apply_baseline(raw, method = nl_bm, blank_ids = nl_blank_ids)
+      cmp <- tryCatch(qres_compare_plugin_outputs(raw, plugins = nl_tools),
+                      error = function(e) NULL)
+      if (!is.null(cmp) && nrow(cmp) > 0) {
+        cmp$dataset_id <- did
+        cmp$plot_label <- .label(did)
+      }
+      cmp
+    })
+    dplyr::bind_rows(Filter(Negate(is.null), all_cmp))
+  }) |> bindCache(comp_active_ids(), comp_has_upload(),
+                  input$comp_upload_well_dt_rows_selected,
+                  input$comp_tools, input$comp_baseline)
+
+  # ── Wide table for download ─────────────────────────────────────────────────
+  .comp_wide_analyse <- reactive({
+    long <- comp_metrics_long()
+    if (is.null(long) || nrow(long) == 0) return(data.frame())
+    meta <- comp_filtered_rv()
+    long$well <- sub('^.*__', '', long$well_id)
+    wide <- long |>
+      dplyr::select(dataset_id, well_id, well, metric_name, metric_value, tool) |>
+      dplyr::mutate(col_name = paste0(tool, '·', metric_name)) |>
+      dplyr::select(-tool, -metric_name) |>
+      tidyr::pivot_wider(names_from = col_name, values_from = metric_value, values_fn = mean) |>
+      dplyr::select(-well_id)
+    if (!is.null(meta) && nrow(meta) > 0 && 'dataset_id' %in% names(meta)) {
+      mcols <- intersect(c('species', 'temperature_c', 'medium_type',
+                            'perturbation_type', 'perturbation'), names(meta))
+      if (length(mcols) > 0) {
+        msub <- dplyr::distinct(meta[, c('dataset_id', mcols), drop = FALSE])
+        wide <- dplyr::left_join(wide, msub, by = 'dataset_id')
+      }
+    }
+    front <- intersect(c('dataset_id', 'species', 'temperature_c', 'medium_type',
+                          'perturbation_type', 'perturbation', 'well'), names(wide))
+    mcols2 <- setdiff(names(wide), front)
+    dplyr::arrange(dplyr::select(wide, dplyr::all_of(c(front, mcols2))),
+                   dataset_id, well)
+  })
+
+  # ── Growth curves tab UI ────────────────────────────────────────────────────
+  output$comp_curves_ui <- renderUI({
+    ids    <- comp_active_ids()
+    has_up <- comp_has_upload()
+    if (length(ids) == 0 && !has_up)
+      return(tags$div(style = 'color:dimgray; padding:30px; text-align:center;',
+        icon('arrow-left'), ' Select datasets in the Datasets tab to view growth curves.'))
+    ctrl_ids <- input$comp_upload_controls %||% character(0)
     tagList(
-      fluidRow(
-        column(2, checkboxInput('comp_log_y', 'Log y', FALSE)),
-        column(10, note)
+      tags$div(
+        tags$b('Baseline subtraction', style = 'font-size:13px;'),
+        tags$small(style = 'color:dimgray; margin-left:6px;',
+          '— Sprouffske & Wagner (2012), Hall et al. (2014), gcplyr / Mira et al. (2022)'),
+        br(),
+        radioButtons('comp_curves_baseline', NULL, inline = TRUE,
+          choices  = c('None' = 'none', 'Min per well' = 'min_well',
+                       'First 3 tp' = 'first_3', 'Blank wells' = 'blank_wells'),
+          selected = 'none')
       ),
-      plotOutput('comp_curves', height = '420px')
+      fluidRow(column(2, checkboxInput('comp_log_y', 'Log y', FALSE))),
+      withSpinner(plotOutput('comp_curves', height = '420px'), type = 6, color = '#5b9bd5')
     )
   })
 
   output$comp_curves <- renderPlot({
-    raw <- comp_raw_long()
-    req(!is.null(raw))
+    raw <- comp_all_raw()
+    req(!is.null(raw) && nrow(raw) > 0)
+    # Apply display baseline
+    bm  <- input$comp_curves_baseline %||% 'none'
+    bids <- if (bm == 'blank_wells')
+      tryCatch(qres_get_blank_wells(con, comp_active_ids()), error = function(e) character(0))
+    else character(0)
+    if (bm == 'blank_wells' && comp_has_upload())
+      bids <- c(bids, input$comp_upload_blanks %||% character(0))
+    raw <- .apply_baseline(raw, method = bm, blank_ids = bids)
+    # Control wells in black
+    ctrl_well_ids <- raw$well_id[raw$well %in% (input$comp_upload_controls %||% character(0))]
     colour_col <- if ('plot_label' %in% names(raw)) 'plot_label' else 'dataset_id'
     qres_plot_growth(raw, log_y = input$comp_log_y %||% FALSE,
                      colour_by = colour_col,
-                     title = NULL)
-  }) |> bindCache(comp_raw_long(), input$comp_log_y)
+                     control_wells = ctrl_well_ids)
+  }) |> bindCache(comp_all_raw(), input$comp_log_y, input$comp_curves_baseline,
+                  input$comp_upload_controls)
 
-  output$comp_table <- renderDT(server = TRUE, {
-    req(nrow(comparison_result()) > 0)
-    df  <- comparison_result()
-    hide <- which(names(df) %in% c('dataset_id', 'model_name')) - 1L
-    datatable(df, rownames = FALSE,
-              options = list(pageLength = 15, scrollX = TRUE,
-                             columnDefs = list(list(visible = FALSE, targets = hide))))
+  # ── Comparison plot tab UI ──────────────────────────────────────────────────
+  output$comp_comparison_ui <- renderUI({
+    ids    <- comp_active_ids()
+    has_up <- comp_has_upload()
+    if (length(ids) == 0 && !has_up)
+      return(tags$div(style = 'color:dimgray; padding:30px; text-align:center;',
+        icon('arrow-left'), ' Select datasets in the Datasets tab to run the comparison.'))
+    tagList(
+      tags$div(
+        tags$b('Baseline subtraction', style = 'font-size:13px;'),
+        tags$small(style = 'color:dimgray; margin-left:6px;',
+          '— Sprouffske & Wagner (2012), Hall et al. (2014), gcplyr / Mira et al. (2022)'),
+        br(),
+        radioButtons('comp_baseline', NULL, inline = TRUE,
+          choices  = c('None' = 'none', 'Min per well' = 'min_well',
+                       'First 3 tp' = 'first_3', 'Blank wells' = 'blank_wells'),
+          selected = 'none'),
+        uiOutput('comp_blank_note')
+      ),
+      hr(style = 'margin: 6px 0;'),
+      fluidRow(
+        column(4,
+          selectInput('comp_metric', 'Metric',
+            choices  = c('doubling_time_h', 'mumax_percapita', 'lag_time_h',
+                         'auc_trapezoid', 'max_od', 'delta_od', 'max_death_rate'),
+            selected = 'doubling_time_h')),
+        column(8,
+          checkboxGroupInput('comp_tools', 'Tools',
+            choices  = c('model_free', 'gcplyr', 'growthrates',
+                         'DGrowthR' = 'dgrothr', 'KinBiont' = 'kinbiont'),
+            selected = c('model_free', 'gcplyr', 'growthrates'),
+            inline   = TRUE),
+          tags$small(style = 'color:dimgray;',
+            icon('hourglass-half'),
+            ' DGrowthR (GP) and KinBiont (Julia) are slow — 30 s–3 min per dataset.'))
+      ),
+      withSpinner(plotOutput('comp_boxplot', height = '420px'), type = 6, color = '#5b9bd5'),
+      br(),
+      fluidRow(
+        column(12,
+          tags$b('Fitted parameters — all wells', style = 'font-size:13px;'),
+          tags$span(style = 'margin-left:10px;',
+            downloadButton('comp_dl_csv', 'Download CSV', class = 'btn-sm btn-default')),
+          tags$span(style = 'margin-left:10px;',
+            actionButton('send_comp_email', icon('envelope'),
+              class = 'btn-sm btn-default', title = 'Email results')),
+          uiOutput('comp_email_ui')
+        )
+      ),
+      br(),
+      withSpinner(DT::DTOutput('comp_params_table'), type = 6, color = '#5b9bd5')
+    )
   })
 
-  output$comp_scatter <- renderPlot({
-    req(nrow(comparison_result()) > 0, input$scatter_x, input$scatter_y)
-    qres_plot_tool_scatter(comparison_result(),
-                            tool_x = input$scatter_x,
-                            tool_y = input$scatter_y,
-                            metric = input$comp_metric)
-  }) |> bindCache(comparison_result(), input$scatter_x, input$scatter_y, input$comp_metric)
+  output$comp_blank_note <- renderUI({
+    req(input$comp_baseline == 'blank_wells')
+    ids  <- comp_active_ids()
+    bids <- if (length(ids) > 0)
+      tryCatch(qres_get_blank_wells(con, ids), error = function(e) character(0))
+    else character(0)
+    if (comp_has_upload()) bids <- c(bids, input$comp_upload_blanks %||% character(0))
+    if (length(bids) > 0)
+      tags$small(style = 'color:#27ae60;',
+        icon('check'), sprintf(' %d blank well(s) found.', length(bids)))
+    else
+      tags$small(style = 'color:#e74c3c;', icon('exclamation-triangle'),
+        ' No blank wells designated. Select a different method.')
+  })
 
-  # ── Email comparison results ─────────────────────────────────────────────────
-  comp_email_status <- reactiveVal('')
+  output$comp_boxplot <- renderPlot({
+    combined <- comp_metrics_long()
+    metric   <- input$comp_metric %||% 'doubling_time_h'
+    if (is.null(combined) || nrow(combined) == 0) {
+      return(ggplot2::ggplot() +
+        ggplot2::annotate('text', x = .5, y = .5, size = 5, colour = 'grey50',
+          label = 'No metrics computed yet.') +
+        ggplot2::theme_void())
+    }
+    facet_col <- if ('plot_label' %in% names(combined)) 'plot_label' else 'dataset_id'
+    qres_plot_metric_comparison(combined, metric = metric,
+      facet_by = if (length(unique(combined[[facet_col]])) > 1) facet_col else NULL)
+  }) |> bindCache(comp_active_ids(), comp_has_upload(),
+                  input$comp_upload_well_dt_rows_selected,
+                  input$comp_tools, input$comp_baseline, input$comp_metric)
+
+  output$comp_params_table <- DT::renderDT({
+    wide <- .comp_wide_analyse()
+    if (nrow(wide) == 0)
+      return(DT::datatable(data.frame(Note = 'No results yet.'),
+                           rownames = FALSE, options = list(dom = 't')))
+    num_cols <- names(wide)[sapply(wide, is.numeric)]
+    DT::datatable(wide, rownames = FALSE, filter = 'top',
+      extensions = 'RowGroup',
+      options = list(
+        pageLength  = 50, scrollX = TRUE,
+        rowGroup    = list(dataSrc = which(names(wide) == 'dataset_id') - 1L),
+        columnDefs  = list(list(visible = FALSE,
+                                targets = which(names(wide) == 'dataset_id') - 1L)),
+        dom = 'frtip'
+      )) |> DT::formatRound(num_cols, digits = 4)
+  }, server = TRUE)
+
+  output$comp_dl_csv <- downloadHandler(
+    filename = function() paste0('comparison_', format(Sys.time(), '%Y%m%d_%H%M%S'), '.csv'),
+    content  = function(file) utils::write.csv(.comp_wide_analyse(), file, row.names = FALSE)
+  )
+
+  # ── Email results ───────────────────────────────────────────────────────────
   output$comp_email_status <- renderText(comp_email_status())
 
+  output$comp_email_ui <- renderUI({
+    msg <- comp_email_status()
+    if (!nzchar(msg)) return(NULL)
+    fluidRow(style = 'margin-top:6px;',
+      column(7, textInput('comp_email_addr', NULL,
+        value = Sys.getenv('PHAMIG_ADMIN_EMAIL', unset = ''),
+        placeholder = 'your@email.com')),
+      column(5, tags$small(style = 'color:#555;', textOutput('comp_email_status')))
+    )
+  })
+
   observeEvent(input$send_comp_email, {
+    comp_email_status('Enter address above and click again to send.')
     addr <- trimws(input$comp_email_addr %||% '')
-    if (!nzchar(addr)) { comp_email_status('Enter an email address first.'); return() }
-    df  <- comparison_result()
-    raw <- comp_raw_long()
+    if (!nzchar(addr)) return()
+    df <- tryCatch(comp_metrics_long(), error = function(e) NULL)
     if (is.null(df) || nrow(df) == 0) { comp_email_status('No results to send.'); return() }
-
     comp_email_status('Sending…')
-
     tryCatch({
-      box_png    <- tempfile(fileext = '.png')
-      curves_png <- tempfile(fileext = '.png')
-      csv_path   <- tempfile(fileext = '.csv')
-      facet_col  <- if ('plot_label' %in% names(df)) 'plot_label' else 'dataset_id'
-      ggplot2::ggsave(box_png, plot =
-        qres_plot_metric_comparison(df, metric = input$comp_metric,
+      box_png  <- tempfile(fileext = '.png')
+      csv_path <- tempfile(fileext = '.csv')
+      facet_col <- if ('plot_label' %in% names(df)) 'plot_label' else 'dataset_id'
+      ggplot2::ggsave(box_png,
+        plot  = qres_plot_metric_comparison(df, metric = input$comp_metric %||% 'doubling_time_h',
           facet_by = if (length(unique(df[[facet_col]])) > 1) facet_col else NULL),
         width = 8, height = 5, dpi = 120)
-      if (!is.null(raw) && nrow(raw) > 0) {
-        colour_col <- if ('plot_label' %in% names(raw)) 'plot_label' else 'dataset_id'
-        ggplot2::ggsave(curves_png, plot =
-          qres_plot_growth(raw, log_y = FALSE, colour_by = colour_col),
-          width = 8, height = 5, dpi = 120)
-      } else {
-        curves_png <- NULL
-      }
-      write.csv(df, csv_path, row.names = FALSE)
-
-      attachments <- Filter(Negate(is.null), list(box_png, curves_png, csv_path))
+      utils::write.csv(.comp_wide_analyse(), csv_path, row.names = FALSE)
       phamig_send_comparison_email(
-        to          = addr,
-        metric      = input$comp_metric,
-        n_datasets  = length(unique(df$dataset_id)),
-        attachments = attachments
-      )
-      comp_email_status(paste0('Sent to ', addr, '. Results cleared — ready for a new query.'))
-      # Reset everything to default state after sending
-      comparison_result(data.frame())
-      comp_raw_long(NULL)
-      comp_show_email(FALSE)
-      comp_status_msg('')
-      updateCheckboxGroupInput(session, 'comp_tools',
-        selected = c('model_free', 'gcplyr', 'growthrates'))
-    }, error = function(e) {
-      comp_email_status(paste0('Failed: ', conditionMessage(e)))
-    })
+        to = addr, metric = input$comp_metric %||% 'doubling_time_h',
+        n_datasets = length(unique(df$dataset_id)),
+        attachments = list(box_png, csv_path))
+      comp_email_status(paste0('Sent to ', addr, '.'))
+    }, error = function(e) comp_email_status(paste0('Failed: ', conditionMessage(e))))
   })
 
   # ── Reset tool checkboxes when navigating away from the Analyse route ────────
   observeEvent(get_page(), {
     if (!is_page('analyse')) {
-      updateCheckboxGroupInput(session, 'comp_tools',
-        selected = c('model_free', 'gcplyr', 'growthrates'))
+      comp_email_status('')
     }
   }, ignoreInit = TRUE)
 

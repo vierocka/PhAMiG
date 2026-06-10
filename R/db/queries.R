@@ -100,7 +100,34 @@ qres_search_by_publication <- function(con, author = NULL, year_min = NULL,
   ", full_where))
 }
 
-qres_filter_datasets <- function(con, species = NULL, temp_min = NULL, temp_max = NULL,
+qres_get_distinct_authors <- function(con) {
+  res <- DBI::dbGetQuery(con, "SELECT authors FROM dataset WHERE authors IS NOT NULL")
+  parts <- unlist(strsplit(res$authors, ','))
+  sort(unique(trimws(parts[nzchar(trimws(parts))])))
+}
+
+qres_get_distinct_strains <- function(con, species) {
+  res <- DBI::dbGetQuery(con,
+    "SELECT DISTINCT strain FROM well_metadata WHERE lower(species) = lower(?) AND strain IS NOT NULL ORDER BY strain",
+    params = list(species))
+  trimws(res$strain[nzchar(trimws(res$strain))])
+}
+
+qres_get_distinct_perturbation_types <- function(con) {
+  res <- DBI::dbGetQuery(con,
+    "SELECT DISTINCT perturbation_type FROM well_metadata WHERE perturbation_type IS NOT NULL ORDER BY perturbation_type")
+  res$perturbation_type[nzchar(res$perturbation_type)]
+}
+
+qres_get_distinct_perturbations <- function(con, perturb_type) {
+  res <- DBI::dbGetQuery(con,
+    "SELECT DISTINCT perturbation FROM well_metadata WHERE lower(perturbation_type) = lower(?) AND perturbation IS NOT NULL ORDER BY perturbation",
+    params = list(perturb_type))
+  res$perturbation[nzchar(res$perturbation)]
+}
+
+qres_filter_datasets <- function(con, species = NULL, strain = NULL,
+                                  temp_min = NULL, temp_max = NULL,
                                   medium = NULL, perturbation_type = NULL,
                                   perturbation = NULL, year_min = NULL, year_max = NULL,
                                   author = NULL, registered_only = TRUE) {
@@ -109,6 +136,10 @@ qres_filter_datasets <- function(con, species = NULL, temp_min = NULL, temp_max 
   if (!is.null(species) && nzchar(species)) {
     clauses <- c(clauses, sprintf(
       "lower(coalesce(w.species,'')) LIKE lower('%%%s%%')", qres_sql_safe(species)))
+  }
+  if (!is.null(strain) && nzchar(strain)) {
+    clauses <- c(clauses, sprintf(
+      "lower(coalesce(w.strain,'')) LIKE lower('%%%s%%')", qres_sql_safe(strain)))
   }
   if (!is.null(temp_min) && is.finite(as.numeric(temp_min %||% NA_real_))) {
     clauses <- c(clauses, sprintf("p.temperature_c >= %s", as.numeric(temp_min)))
