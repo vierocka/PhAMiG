@@ -736,7 +736,9 @@ ui_ask <- fluidPage(
   br(),
   tabsetPanel(id = 'nl_result_tabs',
     tabPanel('Results table',
-      br(), DTOutput('nl_table')),
+      br(),
+      uiOutput('nl_selection_hint'),
+      DTOutput('nl_table')),
     tabPanel('Comparison plot',
       br(),
       selectInput('nl_metric_select', 'Metric to plot',
@@ -3090,6 +3092,23 @@ server <- function(input, output, session) {
     }
   })
 
+  output$nl_selection_hint <- renderUI({
+    req(nl_result())
+    df <- nl_result()$data
+    if (is.null(df) || nrow(df) == 0 || !'dataset_id' %in% names(df)) return(NULL)
+    n_sel <- length(input$nl_table_rows_selected)
+    if (n_sel > 0) {
+      tags$p(style = 'font-size:12px; color:#2980b9; margin-bottom:4px;',
+        icon('check-circle'),
+        sprintf(' %d dataset(s) selected — comparison plot and growth curves use only these.
+                 Click rows to toggle; click elsewhere to deselect all.', n_sel))
+    } else {
+      tags$p(style = 'font-size:12px; color:#888; margin-bottom:4px;',
+        icon('info-circle'),
+        ' Click one or more rows to restrict the comparison plot and growth curves to those datasets.')
+    }
+  })
+
   output$nl_table <- renderDT({
     req(nl_result())
     df <- nl_result()$data
@@ -3098,8 +3117,22 @@ server <- function(input, output, session) {
                                  'perturbation', 'temperature_c', 'year', 'authors', 'doi'),
                               names(df))
     datatable(df[, display_cols, drop = FALSE],
-              rownames = FALSE,
-              options  = list(pageLength = 20, scrollX = TRUE))
+              selection = 'multiple',
+              rownames  = FALSE,
+              options   = list(pageLength = 20, scrollX = TRUE))
+  })
+
+  # Returns selected dataset_ids (user-picked rows) or all ids with raw data.
+  nl_active_ids <- reactive({
+    res <- nl_result()
+    if (is.null(res) || is.null(res$data) || nrow(res$data) == 0) return(NULL)
+    d   <- res$data
+    if (!'dataset_id' %in% names(d)) return(NULL)
+    sel <- input$nl_table_rows_selected
+    if (length(sel) > 0) return(unique(d$dataset_id[sel]))
+    ids <- unique(d$dataset_id)
+    if ('raw_path' %in% names(d)) ids <- unique(d$dataset_id[!is.na(d$raw_path)])
+    ids
   })
 
   output$nl_comp_plot <- renderPlot({
@@ -3107,19 +3140,18 @@ server <- function(input, output, session) {
     res    <- nl_result()
     metric <- input$nl_metric_select %||% 'doubling_time_h'
 
-    # LLM-returned comparison result
+    # LLM-returned comparison result (type='comparison')
     if (res$type == 'comparison' && !is.null(res$data) && nrow(res$data) > 0) {
       return(qres_plot_metric_comparison(res$data, metric = metric,
                facet_by = if (length(unique(res$data$dataset_id)) > 1) 'dataset_id' else NULL))
     }
 
-    # Rule-based table result: auto-run comparison on returned datasets (cap 5)
+    # Rule-based table result: run comparison on active ids
     if (res$type == 'table' && !is.null(res$data) &&
         'dataset_id' %in% names(res$data) && nrow(res$data) > 0) {
-      ids <- unique(res$data$dataset_id)
-      if ('raw_path' %in% names(res$data))
-        ids <- unique(res$data$dataset_id[!is.na(res$data$raw_path)])
-      ids <- head(ids, 5)
+      user_sel <- length(input$nl_table_rows_selected) > 0
+      ids <- nl_active_ids()
+      if (!user_sel) ids <- head(ids, 5)   # cap auto-mode for speed
       if (length(ids) == 0) {
         return(ggplot2::ggplot() +
           ggplot2::annotate('text', x = .5, y = .5, size = 4.5, colour = 'grey50',
@@ -3169,12 +3201,8 @@ server <- function(input, output, session) {
   })
 
   output$nl_curves_panel <- renderUI({
-    res <- nl_result()
-    if (is.null(res)) return(NULL)
-    has_ids <- (res$type == 'comparison' && !is.null(res$filtered)) ||
-               (res$type == 'table' && !is.null(res$data) &&
-                'dataset_id' %in% names(res$data) && nrow(res$data) > 0)
-    if (!has_ids) return(NULL)
+    ids <- nl_active_ids()
+    if (is.null(ids) || length(ids) == 0) return(NULL)
     tagList(
       checkboxInput('nl_log_y', 'Log y', FALSE),
       plotOutput('nl_curves_plot', height = '420px')
@@ -3183,16 +3211,10 @@ server <- function(input, output, session) {
 
   output$nl_curves_plot <- renderPlot({
     req(nl_result())
-    res <- nl_result()
-
-    ids <- if (res$type == 'comparison' && !is.null(res$filtered)) {
-      res$filtered$dataset_id
-    } else if (res$type == 'table' && !is.null(res$data) &&
-               'dataset_id' %in% names(res$data) && nrow(res$data) > 0) {
-      head(res$data$dataset_id, 8)
-    } else {
-      NULL
-    }
+    res      <- nl_result()
+    user_sel <- length(input$nl_table_rows_selected) > 0
+    ids      <- nl_active_ids()
+    if (!user_sel) ids <- head(ids, 8)   # cap auto-mode
     if (is.null(ids) || length(ids) == 0) return(NULL)
 
     raw_list <- lapply(ids, function(did) {
