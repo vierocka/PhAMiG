@@ -1670,6 +1670,9 @@ server <- function(input, output, session) {
   observeEvent(input$clear_search, {
     updateTextInput(session, 'search', value = '')
     dataset_results(tryCatch(qres_search_datasets(con), error = function(e) data.frame()))
+    selected_dataset(NULL)
+    detail_dataset_id(NULL)
+    DT::dataTableProxy('dataset_table') |> DT::selectRows(NULL)
   })
 
   observeEvent(input$run_search, {
