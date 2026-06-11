@@ -28,6 +28,7 @@ source('R/import/metadata.R')
 source('R/import/generic_csv.R')
 source('R/import/biotek.R')
 source('R/import/tecan.R')
+source('R/import/logphase_reader.R')
 
 source('R/plugins/model_free.R')
 source('R/plugins/gcplyr.R')
@@ -995,6 +996,27 @@ ui_submit <- fluidPage(
               br(),
               textAreaInput('upload_notes', NULL,
                 rows = 2, placeholder = 'e.g. Outlier wells removed; temperature drifted ±0.5°C')
+            ),
+
+            # Paste plate-reader procedure output → auto-fill instrument fields
+            tags$details(class = 'optional-section', id = 'procedure_paste_section',
+              tags$summary(
+                tagList(icon('magic'), ' Auto-fill from plate reader output'),
+                tags$span(class = 'opt-badge', 'beta')),
+              br(),
+              tags$div(class = 'alert alert-info', style = 'font-size:12px; padding:6px 10px; margin-bottom:8px;',
+                icon('circle-info'),
+                ' Paste the "Procedure Summary" text from your plate reader software.',
+                ' Fields are extracted automatically. You can still edit them below.'),
+              fluidRow(
+                column(9,
+                  textAreaInput('upload_procedure_paste', NULL, rows = 3,
+                    placeholder = 'Procedure Summary  Plate Type: ...  Temperature setpoint: 30 °C  Shaking frequency: 800 RPMs …')),
+                column(3, br(),
+                  actionButton('upload_procedure_extract', tagList(icon('wand-magic-sparkles'), ' Extract'),
+                               class = 'btn-info btn-sm', style = 'margin-top:4px; width:100%;'),
+                  uiOutput('upload_procedure_extract_status'))
+              )
             ),
 
             # Instrument & plate details (optional, collapsible)
@@ -2719,8 +2741,35 @@ server <- function(input, output, session) {
     n_sheets  <- if (is_excel && requireNamespace('readxl', quietly = TRUE))
                    length(readxl::excel_sheets(raw_path)) else 1L
 
-    if (is_excel && n_sheets > 1L) {
-      # Multi-plate Excel: combine all sheets; bypass single-plate CSV validator
+    if (is_excel && qres_detect_logphase_format(raw_path)) {
+      # LogPhase600 format: "Plate N - Raw Data" sheets for curves;
+      # "Plate N - Results" sheets for well metadata (strain, concentration, replicate)
+      long <- tryCatch(
+        qres_read_logphase_raw(raw_path, dataset_id = '__upload__'),
+        error = function(e) NULL)
+      if (is.null(long) || nrow(long) == 0) { comp_upload_valid(FALSE); comp_upload_rv(NULL); return() }
+      comp_upload_rv(long)
+      comp_upload_valid(TRUE)
+      raw_plate_count <- length(unique(long$plate_id))
+      comp_upload_n_plates(raw_plate_count)
+      # Auto-load well metadata from Results sheets
+      well_meta <- tryCatch(
+        qres_read_logphase_well_meta(raw_path, dataset_id = '__upload__'),
+        error = function(e) NULL)
+      if (!is.null(well_meta) && nrow(well_meta) > 0) {
+        comp_well_meta_rv(well_meta)
+        # Auto-detect blanks from is_blank column
+        blank_wells  <- unique(well_meta$well[isTRUE(well_meta$is_blank) | well_meta$is_blank == TRUE])
+        updateSelectizeInput(session, 'comp_upload_blanks',   selected = blank_wells)
+        # Auto-detect replicates
+        if ('replicate' %in% names(well_meta)) {
+          rep_ids <- setNames(as.list(as.integer(well_meta$replicate)), well_meta$well)
+          rep_ids <- rep_ids[!is.na(unlist(rep_ids))]
+          comp_replicates_rv(rep_ids)
+        }
+      }
+    } else if (is_excel && n_sheets > 1L) {
+      # Generic multi-sheet Excel: combine all sheets; bypass single-plate CSV validator
       long <- tryCatch(
         qres_excel_to_long(raw_path, dataset_id = '__upload__'),
         error = function(e) NULL)
@@ -3853,6 +3902,49 @@ server <- function(input, output, session) {
         icon('exclamation-triangle'),
         ' This key is not stored in recoverable form. Copy it now.')
     )
+  })
+
+  # ── Procedure text paste → auto-fill instrument fields ─────────────────────
+  observeEvent(input$upload_procedure_extract, {
+    txt <- trimws(input$upload_procedure_paste %||% '')
+    if (!nzchar(txt)) {
+      output$upload_procedure_extract_status <- renderUI(
+        tags$small(style = 'color:#e67e22;', icon('triangle-exclamation'), ' Paste text first.'))
+      return()
+    }
+    meta <- tryCatch(qres_parse_procedure_text(txt),
+                     error = function(e) list())
+    if (length(meta) == 0) {
+      output$upload_procedure_extract_status <- renderUI(
+        tags$small(style = 'color:#e74c3c;', icon('times'), ' No fields recognised.'))
+      return()
+    }
+    filled <- character(0)
+    if (!is.null(meta$plate_type) && nzchar(meta$plate_type)) {
+      updateTextInput(session, 'upload_plate_reader', value = meta$plate_type)
+      filled <- c(filled, 'Plate reader')
+    }
+    if (!is.null(meta$wavelength_nm) && !is.na(meta$wavelength_nm)) {
+      updateNumericInput(session, 'upload_wavelength', value = meta$wavelength_nm)
+      filled <- c(filled, 'Wavelength')
+    }
+    if (!is.null(meta$shaking_rpm) && !is.na(meta$shaking_rpm)) {
+      updateNumericInput(session, 'upload_shake_rpm', value = meta$shaking_rpm)
+      filled <- c(filled, 'Shaking rpm')
+    }
+    if (!is.null(meta$temperature_c) && !is.na(meta$temperature_c)) {
+      updateTextInput(session, 'upload_temp_c', value = as.character(meta$temperature_c))
+      filled <- c(filled, 'Temperature')
+    }
+    if (length(filled)) {
+      output$upload_procedure_extract_status <- renderUI(
+        tags$small(style = 'color:#27ae60;', icon('check'),
+          paste(' Filled:', paste(filled, collapse = ', '))))
+    } else {
+      output$upload_procedure_extract_status <- renderUI(
+        tags$small(style = 'color:#e67e22;', icon('triangle-exclamation'),
+          ' Text parsed but no matching fields found.'))
+    }
   })
 
   observeEvent(input$run_upload, {
