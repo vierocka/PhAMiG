@@ -71,8 +71,10 @@ qres_plot_growth <- function(raw_long, log_y = FALSE, colour_by = 'well',
                               rep_groups = list()) {
   requireNamespace('ggplot2')
 
-  if (isTRUE(log_y))
+  if (isTRUE(log_y)) {
     raw_long <- raw_long[is.finite(raw_long$value) & raw_long$value > 0, ]
+    if (nrow(raw_long) == 0) return(ggplot2::ggplot() + ggplot2::theme_void())
+  }
 
   # Rep-group colouring: overrides colour_by when replicate groups are assigned.
   # rep_groups: named list well → integer group ID.

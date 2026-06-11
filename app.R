@@ -2417,6 +2417,9 @@ server <- function(input, output, session) {
                   selectizeInput('comp_upload_blanks', NULL,
                                  choices = NULL, multiple = TRUE,
                                  options = list(placeholder = 'none selected')),
+                  actionButton('comp_clear_blank_sel', tagList(icon('xmark'), ' Clear blanks'),
+                    class = 'btn btn-xs btn-outline-secondary',
+                    style = 'font-size:11px; height:22px; padding:1px 7px; margin-bottom:3px;'),
                   tags$div(style = 'margin-top:2px;',
                     checkboxInput('comp_autodetect_blanks',
                       tags$span(style = 'font-size:11px; font-weight:normal;',
@@ -2442,7 +2445,10 @@ server <- function(input, output, session) {
                   uiOutput('comp_ctrl_range_status'),
                   selectizeInput('comp_upload_controls', NULL,
                                  choices = NULL, multiple = TRUE,
-                                 options = list(placeholder = 'none selected'))
+                                 options = list(placeholder = 'none selected')),
+                  actionButton('comp_clear_ctrl_sel', tagList(icon('xmark'), ' Clear controls'),
+                    class = 'btn btn-xs btn-outline-secondary',
+                    style = 'font-size:11px; height:22px; padding:1px 7px; margin-bottom:3px;')
                 )
               ),
               # JS: Enter key in range text boxes triggers the Add button
@@ -2621,6 +2627,9 @@ server <- function(input, output, session) {
             selectizeInput('comp_upload_blanks', NULL,
                            choices = NULL, multiple = TRUE,
                            options = list(placeholder = 'none selected')),
+            actionButton('comp_clear_blank_sel', tagList(icon('xmark'), ' Clear blanks'),
+              class = 'btn btn-xs btn-outline-secondary',
+              style = 'font-size:11px; height:22px; padding:1px 7px; margin-bottom:3px;'),
             tags$div(style = 'margin-top:2px;',
               checkboxInput('comp_autodetect_blanks',
                 tags$span(style = 'font-size:11px; font-weight:normal;',
@@ -2646,7 +2655,10 @@ server <- function(input, output, session) {
             uiOutput('comp_ctrl_range_status'),
             selectizeInput('comp_upload_controls', NULL,
                            choices = NULL, multiple = TRUE,
-                           options = list(placeholder = 'none selected'))
+                           options = list(placeholder = 'none selected')),
+            actionButton('comp_clear_ctrl_sel', tagList(icon('xmark'), ' Clear controls'),
+              class = 'btn btn-xs btn-outline-secondary',
+              style = 'font-size:11px; height:22px; padding:1px 7px; margin-bottom:3px;')
           )
         ),
         tags$script(HTML("
@@ -3192,15 +3204,20 @@ server <- function(input, output, session) {
     if (is.null(raw) || nrow(raw) == 0)
       return(data.frame(well = character(0), mean_od = numeric(0),
                         sd_od = numeric(0), candidate = logical(0)))
+    # Compute SD per (dataset, well) first — prevents inflating SD when
+    # multiple datasets with different OD baselines are combined.
+    per_ds <- dplyr::summarise(
+      dplyr::group_by(raw, dataset_id, well),
+      mean_od = mean(value, na.rm = TRUE),
+      sd_od   = dplyr::coalesce(sd(value, na.rm = TRUE), 0),
+      .groups = 'drop')
     dplyr::arrange(
-      dplyr::mutate(
-        dplyr::summarise(dplyr::group_by(raw, well),
-          mean_od = mean(value, na.rm = TRUE),
-          sd_od   = sd(value,   na.rm = TRUE),
-          .groups = 'drop'),
-        sd_od     = dplyr::coalesce(sd_od, 0),
-        candidate = sd_od < 0.05
-      ),
+      dplyr::summarise(
+        dplyr::group_by(per_ds, well),
+        mean_od   = mean(mean_od, na.rm = TRUE),
+        sd_od     = mean(sd_od,   na.rm = TRUE),
+        candidate = any(sd_od < 0.1),
+        .groups   = 'drop'),
       sd_od
     )
   })
@@ -3212,12 +3229,12 @@ server <- function(input, output, session) {
     cands <- df$well[df$candidate]
     if (length(cands) == 0)
       return(tags$div(style = 'font-size:12px; color:#888; padding:2px 0;',
-        icon('circle-info'), ' No flat wells detected (sd >= 0.05 for all wells).'))
+        icon('circle-info'), ' No flat wells detected (sd >= 0.1 for all wells).'))
     tagList(
       tags$div(style = 'font-size:12px; margin-bottom:3px;',
         tags$strong(length(cands)),
         tags$span(style = 'color:#555;',
-          sprintf(' candidate blank%s (OD sd < 0.05):',
+          sprintf(' candidate blank%s (OD sd < 0.1):',
                   if (length(cands) > 1) 's' else ''))
       ),
       tags$div(
@@ -3238,6 +3255,30 @@ server <- function(input, output, session) {
     merged <- union(input$comp_upload_blanks %||% character(0), cands)
     updateSelectizeInput(session, 'comp_upload_blanks', selected = merged)
   }, ignoreNULL = TRUE, ignoreInit = TRUE)
+
+  observeEvent(input$comp_clear_blank_sel, {
+    updateSelectizeInput(session, 'comp_upload_blanks', selected = character(0))
+    updateCheckboxInput(session, 'comp_autodetect_blanks', value = FALSE)
+  }, ignoreNULL = TRUE, ignoreInit = TRUE)
+
+  observeEvent(input$comp_clear_ctrl_sel, {
+    updateSelectizeInput(session, 'comp_upload_controls', selected = character(0))
+  }, ignoreNULL = TRUE, ignoreInit = TRUE)
+
+  # Wipe all Analyse Data state when the user navigates away from the page.
+  observeEvent(is_page('analyse'), {
+    if (isTRUE(is_page('analyse'))) return()
+    analyse_mode_rv(NULL)
+    analyze_selected_ids(character(0))
+    comp_upload_rv(NULL)
+    comp_upload_valid(FALSE)
+    comp_upload_tried(FALSE)
+    comp_upload_n_plates(1L)
+    comp_plate_labels_rv(NULL)
+    comp_well_meta_rv(NULL)
+    comp_replicates_rv(list())
+    mode_a_reset(mode_a_reset() + 1L)
+  }, ignoreInit = TRUE)
 
   observeEvent(input$comp_well_meta_file, {
     req(input$comp_well_meta_file)
@@ -3526,30 +3567,29 @@ server <- function(input, output, session) {
     blank_ids_db <- if (bm == 'blank_wells')
       tryCatch(qres_get_blank_wells(con, comp_active_ids()), error = function(e) character(0))
     else character(0)
-    qres_prepare_curves(raw, method = bm,
-                        blank_names = blank_names, blank_ids = blank_ids_db)
+    raw  <- qres_prepare_curves(raw, method = bm,
+                                blank_names = blank_names, blank_ids = blank_ids_db)
+    # Attach clean plate labels (sheet names or "Plate N") so the plot can
+    # colour by plate even after the reactive result is cached by bindCache.
+    lbls <- comp_plate_labels_rv()
+    if ('plate_id' %in% names(raw)) {
+      mapped <- if (!is.null(lbls)) lbls[raw$plate_id] else NA_character_
+      raw$plate_label <- ifelse(is.na(mapped),
+                                 sub('.*__plate_', 'Plate ', raw$plate_id),
+                                 as.character(mapped))
+    }
+    raw
   })
 
   output$comp_curves <- renderPlot({
     raw           <- comp_curves_data()
     ctrl_well_ids <- raw$well_id[raw$well %in% (input$comp_upload_controls %||% character(0))]
-    multiplate    <- isTRUE(comp_upload_n_plates() > 1L)
-    per_plate     <- multiplate && (input$comp_plate_view %||% 'together') == 'per_plate'
-    if (multiplate && !per_plate) {
-      # Map internal plate_ids → human-readable labels (sheet names or "Plate N")
-      lbls <- comp_plate_labels_rv()
-      raw$plate_label <- if (!is.null(lbls) && 'plate_id' %in% names(raw)) {
-        mapped <- lbls[raw$plate_id]
-        ifelse(is.na(mapped), sub('.*__plate_', 'Plate ', raw$plate_id), mapped)
-      } else {
-        sub('.*__plate_', 'Plate ', raw$plate_id)
-      }
-      colour_col <- 'plate_label'
-    } else if ('plot_label' %in% names(raw)) {
-      colour_col <- 'plot_label'
-    } else {
-      colour_col <- 'dataset_id'
-    }
+    multiplate  <- isTRUE(comp_upload_n_plates() > 1L)
+    per_plate   <- multiplate && (input$comp_plate_view %||% 'together') == 'per_plate'
+    colour_col  <- if (multiplate && !per_plate && 'plate_label' %in% names(raw))
+                     'plate_label'
+                   else if ('plot_label' %in% names(raw)) 'plot_label'
+                   else 'dataset_id'
     p <- qres_plot_growth(raw, log_y = input$comp_log_y %||% FALSE,
                           colour_by     = colour_col,
                           control_wells = ctrl_well_ids,
@@ -5089,27 +5129,42 @@ server <- function(input, output, session) {
       fluidRow(
         column(6,
           opt_label('Blank wells',
-            'Well names or ranges (e.g. A1:H1). Auto-detect uses SD < 0.05 per well.'),
+            'Well names or ranges (e.g. A1:H1). Auto-detect uses SD < 0.1 per well per dataset.'),
           textInput('nl_blank_range', NULL, value = '',
             placeholder = 'e.g. A1:H1, or use auto-detect', width = '100%'),
           checkboxInput('nl_autodetect_blanks',
-            tagList('Auto-detect from OD signal (SD < 0.05)',
-                    tip('Flat wells — likely blank medium — are detected automatically.')),
+            tagList('Auto-detect from OD signal (SD < 0.1)',
+                    tip('Flat wells — likely blank medium — are detected per dataset automatically.')),
             value = TRUE),
-          uiOutput('nl_blank_autodetect_result')
+          uiOutput('nl_blank_autodetect_result'),
+          actionButton('nl_clear_blanks', tagList(icon('xmark'), ' Clear blanks'),
+            class = 'btn btn-xs btn-outline-secondary',
+            style = 'font-size:11px; height:22px; padding:1px 7px; margin-top:3px;')
         ),
         column(6,
           opt_label('Control wells',
             'Plotted in black; excluded from curve fitting.'),
           textInput('nl_ctrl_range', NULL, value = '',
-            placeholder = 'e.g. H12', width = '100%')
+            placeholder = 'e.g. H12', width = '100%'),
+          actionButton('nl_clear_controls', tagList(icon('xmark'), ' Clear controls'),
+            class = 'btn btn-xs btn-outline-secondary',
+            style = 'font-size:11px; height:22px; padding:1px 7px; margin-top:3px;')
         )
       ),
       hr(style = 'margin: 6px 0;')
     )
   })
 
-  # Auto-detect blank candidates for NL datasets: per-dataset SD < 0.05.
+  observeEvent(input$nl_clear_blanks, {
+    updateTextInput(session, 'nl_blank_range', value = '')
+    updateCheckboxInput(session, 'nl_autodetect_blanks', value = FALSE)
+  }, ignoreNULL = TRUE, ignoreInit = TRUE)
+
+  observeEvent(input$nl_clear_controls, {
+    updateTextInput(session, 'nl_ctrl_range', value = '')
+  }, ignoreNULL = TRUE, ignoreInit = TRUE)
+
+  # Auto-detect blank candidates for NL datasets: per-dataset SD < 0.1.
   nl_blank_candidates <- reactive({
     ids <- nl_active_ids()
     req(!is.null(ids) && length(ids) > 0)
@@ -5118,15 +5173,18 @@ server <- function(input, output, session) {
     })
     raw <- dplyr::bind_rows(Filter(Negate(is.null), all_raw))
     req(nrow(raw) > 0)
+    per_ds <- dplyr::summarise(
+      dplyr::group_by(raw, dataset_id, well),
+      mean_od = mean(value, na.rm = TRUE),
+      sd_od   = dplyr::coalesce(sd(value, na.rm = TRUE), 0),
+      .groups = 'drop')
     dplyr::arrange(
-      dplyr::mutate(
-        dplyr::summarise(dplyr::group_by(raw, well),
-          mean_od = mean(value, na.rm = TRUE),
-          sd_od   = sd(value,   na.rm = TRUE),
-          .groups = 'drop'),
-        sd_od     = dplyr::coalesce(sd_od, 0),
-        candidate = sd_od < 0.05
-      ),
+      dplyr::summarise(
+        dplyr::group_by(per_ds, well),
+        mean_od   = mean(mean_od, na.rm = TRUE),
+        sd_od     = mean(sd_od,   na.rm = TRUE),
+        candidate = any(sd_od < 0.1),
+        .groups   = 'drop'),
       sd_od
     )
   })
@@ -5137,7 +5195,7 @@ server <- function(input, output, session) {
     req(!is.null(df) && nrow(df) > 0)
     hits <- df$well[df$candidate]
     if (length(hits) == 0)
-      return(tags$small(style = 'color:#888;', 'No flat wells found (SD < 0.05).'))
+      return(tags$small(style = 'color:#888;', 'No flat wells found (SD < 0.1).'))
     tagList(
       tags$small(style = 'color:#27ae60;',
         icon('check'), sprintf(' %d candidate(s): %s', length(hits),
