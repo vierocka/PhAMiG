@@ -1435,6 +1435,7 @@ server <- function(input, output, session) {
   comp_upload_valid      <- reactiveVal(FALSE)
   comp_upload_tried      <- reactiveVal(FALSE)  # TRUE once user picks a file; FALSE after Clear
   comp_upload_n_plates   <- reactiveVal(1L)      # >1 for multi-sheet Excel
+  comp_plate_labels_rv   <- reactiveVal(NULL)    # named char: plate_id → sheet name
   comp_well_meta_rv      <- reactiveVal(NULL)   # parsed metadata CSV; NULL = manual mode
   comp_replicates_rv     <- reactiveVal(list()) # named list: well → integer group ID
   comp_email_status    <- reactiveVal('')
@@ -2364,8 +2365,8 @@ server <- function(input, output, session) {
         uiOutput('comp_well_meta_status'),
         fluidRow(
           column(10,
+            # Single-plate only: visual plate map + click-mode assignment
             conditionalPanel('output.comp_has_well_meta !== true && output.comp_is_multiplate !== true',
-              # Click-mode controls live outside renderUI so they don't reset on re-render
               tags$div(style = 'display:flex; align-items:center; gap:10px; margin-bottom:4px; flex-wrap:wrap;',
                 tags$small(style = 'font-weight:600; color:#555;', 'Click mode:'),
                 radioButtons('plate_click_mode', NULL, inline = TRUE,
@@ -2380,7 +2381,26 @@ server <- function(input, output, session) {
                                value = 1L, min = 1L, max = 99L, step = 1L, width = '70px')
                 )
               ),
-              uiOutput('comp_plate_map'),
+              uiOutput('comp_plate_map')
+            ),
+            # Multi-plate info banner + per-plate view toggle
+            conditionalPanel('output.comp_is_multiplate === true && output.comp_has_well_meta !== true',
+              tags$div(class = 'alert alert-info', style = 'font-size:12px; padding:6px 10px; margin-bottom:4px;',
+                icon('layer-group'), ' ',
+                uiOutput('comp_multiplate_info')
+              ),
+              tags$div(style = 'display:flex; align-items:center; gap:10px; margin-bottom:6px; flex-wrap:wrap;',
+                tags$small(style = 'font-weight:600; color:#555;', 'Plot plates:'),
+                radioButtons('comp_plate_view', NULL, inline = TRUE,
+                  choices = c(
+                    'All together (colour by plate)' = 'together',
+                    'Per plate (separate panels)'    = 'per_plate'
+                  ),
+                  selected = 'together')
+              )
+            ),
+            # Blank / control entry — always visible once data is loaded (single or multi-plate)
+            conditionalPanel('output.comp_has_well_meta !== true',
               fluidRow(
                 column(6,
                   tags$label('Blank wells', class = 'control-label'),
@@ -2425,8 +2445,7 @@ server <- function(input, output, session) {
                                  options = list(placeholder = 'none selected'))
                 )
               ),
-              # JS: Enter key in range text boxes triggers the Add button;
-              # Add buttons register their value with Shiny.
+              # JS: Enter key in range text boxes triggers the Add button
               tags$script(HTML("
                 $(document).on('keyup', '#comp_blank_range_txt,#comp_ctrl_range_txt', function(e) {
                   if (e.keyCode === 13) {
@@ -2446,13 +2465,6 @@ server <- function(input, output, session) {
                   if (el) el.value = '';
                 });
               "))
-            ),
-            # Multi-plate Excel: info banner (selectizes are shared with the single-plate block above)
-            conditionalPanel('output.comp_is_multiplate === true && output.comp_has_well_meta !== true',
-              tags$div(class = 'alert alert-info', style = 'font-size:12px; padding:6px 10px; margin-bottom:6px;',
-                icon('layer-group'),
-                uiOutput('comp_multiplate_info')
-              )
             ),
             conditionalPanel('output.comp_has_well_meta === true',
               uiOutput('comp_well_meta_summary')
@@ -2487,6 +2499,8 @@ server <- function(input, output, session) {
   # ── Mode card clicks → analyse_mode_rv ────────────────────────────────────
   observeEvent(input$analyse_mode_click, {
     m <- input$analyse_mode_click
+    # Clicking Repository always starts clean — user must search again to pick datasets
+    if (m == 'A') analyze_selected_ids(character(0))
     if (m %in% c('B', 'C') && length(analyze_selected_ids()) == 0) return()
     analyse_mode_rv(m)
   })
@@ -2637,6 +2651,7 @@ server <- function(input, output, session) {
     comp_upload_valid(FALSE)
     comp_upload_tried(FALSE)
     comp_upload_n_plates(1L)
+    comp_plate_labels_rv(NULL)
     comp_well_meta_rv(NULL)
     comp_replicates_rv(list())
     updateSelectizeInput(session, 'comp_upload_blanks',
@@ -2833,6 +2848,7 @@ server <- function(input, output, session) {
     comp_upload_rv(NULL)
     comp_upload_valid(FALSE)
     comp_upload_n_plates(1L)
+    comp_plate_labels_rv(NULL)
     comp_well_meta_rv(NULL)
     comp_replicates_rv(list())
     updateSelectizeInput(session, 'comp_upload_blanks',
@@ -2857,6 +2873,10 @@ server <- function(input, output, session) {
       comp_upload_valid(TRUE)
       raw_plate_count <- length(unique(long$plate_id))
       comp_upload_n_plates(raw_plate_count)
+      # Store plate_id → "Plate N" label for per-plate facet display
+      pids    <- sort(unique(long$plate_id))
+      p_nums  <- regmatches(pids, regexpr('\\d+$', pids))
+      comp_plate_labels_rv(setNames(paste('Plate', p_nums), pids))
       # Auto-load well metadata from Results sheets
       well_meta <- tryCatch(
         qres_read_logphase_well_meta(raw_path, dataset_id = '__upload__'),
@@ -2875,6 +2895,7 @@ server <- function(input, output, session) {
       }
     } else if (is_excel && n_sheets > 1L) {
       # Generic multi-sheet Excel: combine all sheets; bypass single-plate CSV validator
+      sheet_names <- readxl::excel_sheets(raw_path)
       long <- tryCatch(
         qres_excel_to_long(raw_path, dataset_id = '__upload__'),
         error = function(e) NULL)
@@ -2882,6 +2903,9 @@ server <- function(input, output, session) {
       comp_upload_rv(long)
       comp_upload_valid(TRUE)
       comp_upload_n_plates(n_sheets)
+      # Store plate_id → original sheet name for per-plate facet labels
+      pids <- sort(unique(long$plate_id))
+      comp_plate_labels_rv(setNames(sheet_names[seq_along(pids)], pids))
     } else {
       # Single plate: CSV or single-sheet Excel
       path <- tryCatch(
@@ -3402,16 +3426,20 @@ server <- function(input, output, session) {
             icon('info-circle'), ' No blank wells designated in these datasets.')
       ),
       fluidRow(column(2, checkboxInput('comp_log_y', 'Log y', FALSE))),
-      withSpinner(
-        plotOutput('comp_curves', height = '420px',
-                   hover = hoverOpts('comp_curves_hover', delay = 80,
-                                     delayType = 'debounce', nullOutside = TRUE)),
-        type = 6, color = '#5b9bd5'),
-      uiOutput('comp_curves_tooltip')
+      tags$div(style = 'position:relative;',
+        withSpinner(
+          plotOutput('comp_curves', height = '420px',
+                     hover = hoverOpts('comp_curves_hover', delay = 80,
+                                       delayType = 'debounce', nullOutside = TRUE)),
+          type = 6, color = '#5b9bd5'),
+        uiOutput('comp_curves_tooltip')
+      )
     )
   })
 
-  output$comp_curves <- renderPlot({
+  # Shared reactive: baseline-corrected data used by both the plot and the hover tooltip.
+  # nearPoints() requires the same data that was plotted to compute pixel distances correctly.
+  comp_curves_data <- reactive({
     raw <- comp_all_raw()
     req(!is.null(raw) && nrow(raw) > 0)
     bm  <- input$comp_curves_baseline %||% 'none'
@@ -3420,33 +3448,55 @@ server <- function(input, output, session) {
     else character(0)
     if (bm == 'blank_wells' && comp_has_upload())
       bids <- c(bids, input$comp_upload_blanks %||% character(0))
-    raw <- .apply_baseline(raw, method = bm, blank_ids = bids)
+    .apply_baseline(raw, method = bm, blank_ids = bids)
+  })
+
+  output$comp_curves <- renderPlot({
+    raw           <- comp_curves_data()
     ctrl_well_ids <- raw$well_id[raw$well %in% (input$comp_upload_controls %||% character(0))]
-    colour_col    <- if ('plot_label' %in% names(raw)) 'plot_label' else 'dataset_id'
-    qres_plot_growth(raw, log_y = input$comp_log_y %||% FALSE,
-                     colour_by     = colour_col,
-                     control_wells = ctrl_well_ids,
-                     rep_groups    = comp_replicates_rv())
-  }) |> bindCache(comp_all_raw(), input$comp_log_y, input$comp_curves_baseline,
-                  input$comp_upload_controls,
+    multiplate    <- isTRUE(comp_upload_n_plates() > 1L)
+    per_plate     <- multiplate && (input$comp_plate_view %||% 'together') == 'per_plate'
+    colour_col    <- if (multiplate && !per_plate) 'plate_id'
+                     else if ('plot_label' %in% names(raw)) 'plot_label'
+                     else 'dataset_id'
+    p <- qres_plot_growth(raw, log_y = input$comp_log_y %||% FALSE,
+                          colour_by     = colour_col,
+                          control_wells = ctrl_well_ids,
+                          rep_groups    = comp_replicates_rv())
+    if (per_plate) {
+      lbls <- comp_plate_labels_rv()
+      p <- p + ggplot2::facet_wrap(
+        ~ plate_id, ncol = 2,
+        labeller = if (!is.null(lbls))
+          ggplot2::labeller(plate_id = lbls)
+        else ggplot2::label_value)
+    }
+    p
+  }) |> bindCache(comp_curves_data(), input$comp_log_y,
+                  input$comp_upload_controls, input$comp_plate_view,
                   length(comp_replicates_rv()))
 
-  # Hover tooltip: show well ID of nearest curve
+  # Hover tooltip: show well ID. Uses comp_curves_data() so coordinates match the plot.
   output$comp_curves_tooltip <- renderUI({
     hov <- input$comp_curves_hover
     if (is.null(hov)) return(NULL)
-    raw <- comp_all_raw()
+    raw <- comp_curves_data()
     if (is.null(raw) || nrow(raw) == 0) return(NULL)
-    near <- nearPoints(raw, hov, xvar = 'time_h', yvar = 'value',
-                       maxpoints = 1, threshold = 12)
+    near <- tryCatch(
+      nearPoints(raw, hov, xvar = 'time_h', yvar = 'value',
+                 maxpoints = 1, threshold = 15),
+      error = function(e) data.frame())
     if (nrow(near) == 0) return(NULL)
+    lbl <- if ('well_id' %in% names(near)) near$well_id[1] else near$well[1]
+    px <- hov$coords_css$x %||% (hov$x %||% 0)
+    py <- hov$coords_css$y %||% (hov$y %||% 0)
     tags$div(
       style = sprintf(
         'position:absolute; left:%fpx; top:%fpx; background:rgba(40,40,40,.82);
          color:#fff; padding:3px 7px; border-radius:4px; font-size:11px;
          pointer-events:none; z-index:100; white-space:nowrap;',
-        hov$coords_css$x + 10, hov$coords_css$y - 20),
-      near$well_id[1]
+        px + 10, py - 20),
+      lbl
     )
   })
 
