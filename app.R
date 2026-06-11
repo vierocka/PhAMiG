@@ -565,9 +565,17 @@ ui_search <- fluidPage(
 
   # ── Search hero ─────────────────────────────────────────────────────────────
   tags$div(class = 'search-hero',
-    textInput('search', label = NULL,
-              placeholder = 'Search microbial growth datasets…',
-              width = '100%'),
+    tags$div(style = 'display:flex; align-items:flex-end; gap:6px;',
+      tags$div(style = 'flex:1;',
+        textInput('search', label = NULL,
+                  placeholder = 'Search microbial growth datasets…',
+                  width = '100%')
+      ),
+      actionButton('clear_search', icon('times'),
+                   class = 'btn-default',
+                   title = 'Clear search and show all datasets',
+                   style = 'height:48px; margin-bottom:15px; flex-shrink:0;')
+    ),
     tags$div(class = 'search-examples',
       'Examples: ',
       tags$a(onclick = "fillSearch('E. coli 37°C')", 'E. coli 37°C'), '  |  ',
@@ -640,23 +648,12 @@ ui_search <- fluidPage(
       conditionalPanel('output.has_selected_dataset',
         tags$div(class = 'dataset-detail',
           tabsetPanel(id = 'datasetDetailTabs',
-            tabPanel('Raw curves',
-              br(),
-              checkboxInput('log_y', 'Log-scale y axis', FALSE),
-              plotOutput('growth_plot', height = '420px'),
-              br(),
-              verbatimTextOutput('plate_qc_text')
-            ),
             tabPanel('Links',
               br(),
               uiOutput('selected_info'),
               br(),
               uiOutput('ncbi_link_box'),
               uiOutput('doi_link_box')
-            ),
-            tabPanel('Metrics',
-              br(),
-              DTOutput('metrics_table')
             ),
             tabPanel('QC',
               br(),
@@ -1547,14 +1544,15 @@ server <- function(input, output, session) {
     df <- display_results()
     if (nrow(df) == 0) return(NULL)
 
-    # Show first 2 items always; rest behind a toggle link
+    # Generic block: title (total), top-2 visible, rest behind toggle
     .block <- function(title, vals) {
       vals <- as.character(vals)
       vals <- vals[!is.na(vals) & nzchar(vals) & vals != 'NA']
       if (length(vals) == 0) return(NULL)
-      counts <- sort(table(vals), decreasing = TRUE)
-      n <- length(counts)
-      uid <- paste0('facet_more_', tolower(gsub('[^a-z0-9]', '', title)))
+      counts  <- sort(table(vals), decreasing = TRUE)
+      n       <- length(counts)
+      total   <- sum(counts)
+      uid     <- paste0('facet_more_', tolower(gsub('[^a-z0-9]', '', title)))
 
       make_row <- function(i)
         tags$div(class = 'facet-row',
@@ -1564,40 +1562,98 @@ server <- function(input, output, session) {
       visible <- lapply(seq_len(min(2L, n)), make_row)
 
       more <- if (n > 2) {
-        hidden_rows <- lapply(seq(3L, n), make_row)
         n_more <- n - 2L
         list(
-          tags$div(id = uid, style = 'display:none;', hidden_rows),
-          tags$a(
-            href    = '#',
+          tags$div(id = uid, style = 'display:none;',
+                   lapply(seq(3L, n), make_row)),
+          tags$a(href = '#',
             style   = 'font-size:11px; color:#999; cursor:pointer; display:block; margin-top:2px;',
             onclick = sprintf(
               paste0("var e=document.getElementById('%s');",
-                     "var open=e.style.display!=='none';",
-                     "e.style.display=open?'none':'';",
-                     "this.textContent=open?'Show %d more…':'Show less';",
+                     "var o=e.style.display!=='none';",
+                     "e.style.display=o?'none':'';",
+                     "this.textContent=o?'Show %d more…':'Show less';",
                      "return false;"),
               uid, n_more),
-            sprintf('Show %d more…', n_more)
-          )
+            sprintf('Show %d more…', n_more))
         )
       } else list()
 
-      tagList(tags$h6(title), visible, more, tags$hr(style = 'margin:5px 0;'))
+      tagList(
+        tags$h6(title,
+          tags$span(style = 'float:right; font-weight:normal; color:#bbb;',
+                    paste0('(', total, ')'))),
+        visible, more,
+        tags$hr(style = 'margin:5px 0;'))
     }
 
-    # Authors: keep only the surname (first token before comma); already title-cased in display_results()
-    short_auth <- trimws(sub(',.*', '', as.character(df$authors %||% '')))
-    # Perturbation: skip NA / empty / 'none' / 'NA'
-    perturb_vals <- as.character(df$perturbation %||% '')
-    perturb_vals[perturb_vals %in% c('NA', 'none', 'None', '')] <- NA
+    # Perturbation: 4 fixed subgroups (chemical / genetic / temperature / none)
+    .block_perturbation <- function(df) {
+      if (!'perturbation_type' %in% names(df)) return(NULL)
+      total <- sum(!is.na(df$perturbation_type) & nzchar(df$perturbation_type))
+      if (total == 0) return(NULL)
+
+      subgroup_labels <- c(chemical = 'Chemical', genetic = 'Genetic',
+                           temperature = 'Temperature', none = 'No perturbation')
+      sub_blocks <- lapply(names(subgroup_labels), function(ptype) {
+        sub_df <- df[!is.na(df$perturbation_type) & df$perturbation_type == ptype, ]
+        if (nrow(sub_df) == 0) return(NULL)
+        n_sub <- nrow(sub_df)
+        uid   <- paste0('facet_perturb_', ptype)
+
+        pvals  <- as.character(sub_df$perturbation %||% '')
+        pvals  <- pvals[!is.na(pvals) & nzchar(pvals) & !pvals %in% c('NA','none','None')]
+        ex     <- if (length(pvals) > 0) names(sort(table(pvals), decreasing = TRUE))[1] else NULL
+        all_rows <- if (length(pvals) > 0) {
+          ct <- sort(table(pvals), decreasing = TRUE)
+          lapply(seq_along(ct), function(i)
+            tags$div(class = 'facet-row', style = 'padding-left:14px; font-size:12px;',
+              tags$span(names(ct)[i]),
+              tags$span(class = 'facet-count', as.integer(ct[i]))))
+        } else list()
+
+        tagList(
+          tags$div(class = 'facet-row',
+            style = 'cursor:pointer; font-weight:600; font-size:12px; margin-top:3px;',
+            onclick = sprintf(
+              paste0("var e=document.getElementById('%s');",
+                     "var o=e.style.display!=='none';",
+                     "e.style.display=o?'none':'';",
+                     "return false;"),
+              uid),
+            tags$span(subgroup_labels[ptype]),
+            tags$span(class = 'facet-count', n_sub)
+          ),
+          if (!is.null(ex))
+            tags$div(style = 'font-size:11px; color:#aaa; padding-left:10px; margin-bottom:2px;',
+                     'e.g. ', tags$em(ex)),
+          tags$div(id = uid, style = 'display:none;', all_rows)
+        )
+      })
+      sub_blocks <- Filter(Negate(is.null), sub_blocks)
+      if (length(sub_blocks) == 0) return(NULL)
+      tagList(
+        tags$h6('Perturbation',
+          tags$span(style = 'float:right; font-weight:normal; color:#bbb;',
+                    paste0('(', total, ')'))),
+        sub_blocks,
+        tags$hr(style = 'margin:5px 0;'))
+    }
+
+    # Authors: "Last et al." when >1 author (≥2 commas or ; separator)
+    auth_raw <- as.character(df$authors %||% '')
+    short_auth <- ifelse(
+      grepl(';', auth_raw, fixed = TRUE) | nchar(gsub('[^,]', '', auth_raw)) >= 2,
+      paste0(trimws(sub(',.*', '', auth_raw)), ' et al.'),
+      auth_raw   # single author already title-cased by display_results()
+    )
 
     tags$div(class = 'facet-panel',
-      .block('Species',      df$species),
-      .block('Perturbation', perturb_vals),
-      .block('Temperature',  paste0(df$temperature_c, ' °C')),
-      .block('Medium',       df$medium_type),
-      .block('Authors',      short_auth)
+      .block('Species',     df$species),
+      .block_perturbation(df),
+      .block('Temperature', paste0(df$temperature_c, '°C')),
+      .block('Medium',      df$medium_type),
+      .block('Authors',     short_auth)
     )
   })
 
@@ -1619,6 +1675,11 @@ server <- function(input, output, session) {
     updateNumericInput(session, 'adv_year_min',     value = NA)
     updateNumericInput(session, 'adv_year_max',     value = NA)
     updateTextInput(session,    'adv_doi',          value = '')
+  })
+
+  observeEvent(input$clear_search, {
+    updateTextInput(session, 'search', value = '')
+    dataset_results(tryCatch(qres_search_datasets(con), error = function(e) data.frame()))
   })
 
   observeEvent(input$run_search, {
@@ -1780,19 +1841,30 @@ server <- function(input, output, session) {
 
   output$selected_info <- renderUI({
     req(selected_dataset())
+    sel <- input$dataset_table_rows_selected
+    n   <- length(sel)
+    lbl <- if (n > 1)
+      sprintf('Analyse → Repository (%d datasets)', n)
+    else
+      'Analyse → Repository'
     tagList(
-      tags$p(tags$strong('Selected dataset: '), selected_dataset()),
-      actionButton('go_to_comparison', 'Open in Comparison',
+      tags$p(tags$strong('Selected: '), selected_dataset()),
+      actionButton('go_to_comparison', lbl,
                    class = 'btn-info btn-sm', icon = icon('chart-bar'))
     )
   })
 
   observeEvent(input$go_to_comparison, {
-    did <- selected_dataset()
-    df  <- dataset_results()
-    sp  <- df$species[df$dataset_id == did][1]
-    if (!is.na(sp) && nzchar(sp))
-      updateSelectizeInput(session, 'comp_species', selected = sp)
+    sel <- input$dataset_table_rows_selected
+    df  <- display_results()
+    ids <- if (length(sel) > 0 && nrow(df) > 0)
+      df$dataset_id[sel]
+    else
+      selected_dataset()
+    if (is.null(ids) || length(ids) == 0) return()
+    analyze_selected_ids(ids)
+    # Auto-upgrade to C when user already has a valid file upload
+    analyse_mode_rv(if (isTRUE(comp_upload_valid())) 'C' else 'B')
     change_page('analyse')
   })
 
