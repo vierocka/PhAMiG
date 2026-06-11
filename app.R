@@ -3161,8 +3161,9 @@ server <- function(input, output, session) {
 
   # ── Range-text Add buttons for blank / control well entry ────────────────
   .apply_range_add <- function(txt_val, target_input) {
-    req(!is.null(comp_upload_rv()))
-    available <- unique(comp_upload_rv()$well)
+    raw_src   <- comp_upload_rv() %||% tryCatch(comp_all_raw(), error = function(e) NULL)
+    req(!is.null(raw_src))
+    available <- unique(raw_src$well)
     new_wells <- .parse_wells(txt_val %||% '', available = available)
     existing  <- input[[target_input]] %||% character(0)
     merged    <- union(existing, new_wells)
@@ -3214,8 +3215,8 @@ server <- function(input, output, session) {
 
   output$comp_autodetect_result <- renderUI({
     req(isTRUE(input$comp_autodetect_blanks))
-    req(!is.null(comp_upload_rv()))
     df    <- comp_blank_candidates()
+    req(nrow(df) > 0)
     cands <- df$well[df$candidate]
     if (length(cands) == 0)
       return(tags$div(style = 'font-size:12px; color:#888; padding:2px 0;',
