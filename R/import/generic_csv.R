@@ -13,6 +13,21 @@
 # well_metadata is populated by qres_import_metadata() (summary row) or
 # qres_import_plate_template() (per-well rows). This file does NOT touch well_metadata.
 
+# Normalise any supported file format to a CSV path ready for fread.
+# For Excel files (.xlsx / .xls) the first sheet is extracted to a temp CSV.
+# Returns the path to use with fread / qres_validate_raw_csv.
+qres_normalise_to_csv <- function(path) {
+  if (!grepl('\\.xlsx?$', path, ignore.case = TRUE)) return(path)
+  if (!requireNamespace('readxl', quietly = TRUE))
+    stop('Package "readxl" is required for Excel uploads. Install it with install.packages("readxl").')
+  sheets <- readxl::excel_sheets(path)
+  df     <- as.data.frame(readxl::read_excel(path, sheet = sheets[[1]],
+                                              col_names = TRUE, .name_repair = 'minimal'))
+  tmp    <- tempfile(fileext = '.csv')
+  utils::write.csv(df, tmp, row.names = FALSE)
+  tmp
+}
+
 # Remove all-NA / all-empty rows and columns from a data.table.
 # Plate readers sometimes prefix the data with an empty row or column.
 .strip_empty <- function(dt) {
@@ -31,6 +46,7 @@ qres_raw_to_long <- function(raw_csv, dataset_id,
                               plate_id    = paste0(dataset_id, '__plate_1'),
                               signal_type = 'OD600') {
   requireNamespace('data.table')
+  raw_csv  <- qres_normalise_to_csv(raw_csv)
   dt       <- .strip_empty(data.table::fread(raw_csv, fill = TRUE))
   time_col <- names(dt)[grepl('time', names(dt), ignore.case = TRUE)][1]
   if (is.na(time_col))

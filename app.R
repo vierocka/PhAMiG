@@ -2262,15 +2262,17 @@ server <- function(input, output, session) {
         column(8,
           tags$div(style = 'position:relative;',
             fileInput('comp_upload_file', NULL,
-                      accept = c('.csv', '.tsv', 'text/csv'),
-                      placeholder = 'Choose OD CSV file'),
+                      accept = c('.csv', '.tsv', '.xlsx', '.xls', 'text/csv',
+                                 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+                                 'application/vnd.ms-excel'),
+                      placeholder = 'Choose OD file (CSV or Excel)'),
             tags$div(style = 'position:absolute; top:0; right:0;',
               actionButton('show_comp_demo', 'Demo file',
                            class = 'btn btn-xs btn-info', icon = icon('table')))
           ),
           tags$small(style = 'color:#777;',
             icon('circle-info'),
-            ' Column 1 = time (h), remaining = wells (A1, B2…).')
+            ' CSV or Excel (.xlsx/.xls). Column 1 = time (h), remaining = wells (A1, B2…). Excel: first sheet used.')
         ),
         column(4, br(), uiOutput('comp_upload_status'))
       ),
@@ -2691,7 +2693,10 @@ server <- function(input, output, session) {
   observeEvent(input$comp_upload_file, {
     req(input$comp_upload_file)
     comp_upload_tried(TRUE)
-    path <- input$comp_upload_file$datapath
+    path <- tryCatch(
+      qres_normalise_to_csv(input$comp_upload_file$datapath),
+      error = function(e) { comp_upload_valid(FALSE); comp_upload_rv(NULL); NULL })
+    req(!is.null(path))
     check <- tryCatch(qres_validate_raw_csv(path), error = function(e) list(ok = FALSE, issues = conditionMessage(e)))
     if (!isTRUE(check$ok)) {
       comp_upload_valid(FALSE)
@@ -3848,11 +3853,18 @@ server <- function(input, output, session) {
       return()
     }
 
-    raw_path <- input$upload_raw_csv$datapath
+    raw_path <- tryCatch(
+      qres_normalise_to_csv(input$upload_raw_csv$datapath),
+      error = function(e) {
+        output$upload_progress_ui <- renderUI(NULL)
+        output$upload_status <- renderText(paste('Could not read file:', conditionMessage(e)))
+        NULL
+      })
+    req(!is.null(raw_path))
 
-    # Pre-flight: validate raw CSV format before any DB write
+    # Pre-flight: validate raw CSV/Excel format before any DB write
     output$upload_progress_ui <- renderUI(
-      helpText(icon('spinner'), ' Validating raw CSV format…'))
+      helpText(icon('spinner'), ' Validating raw file format…'))
 
     csv_check <- qres_validate_raw_csv(raw_path)
     if (!csv_check$ok) {
