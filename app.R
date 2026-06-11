@@ -244,6 +244,13 @@ ui_metadata <- fluidPage(
                               '48-well (6×8)'  = '6x8',
                               '24-well (4×6)'  = '4x6')),
 
+      radioButtons('meta_fill_order',
+        opt_label('Pipetting direction',
+          'Controls the order in which values (replicates, mutations, temperature gradient) are assigned to wells. Row-by-row (A1→A2→…→H12) is standard for horizontal multi-channel pipettes. Column-by-column (A1→B1→…→H12) suits those who pipette down columns first.'),
+        inline = TRUE,
+        choices = c('Row-by-row' = 'row', 'Column-by-column' = 'col'),
+        selected = 'row'),
+
       tags$label(class='required-label', 'Perturbation type ★'),
       radioButtons('meta_perturb_type', label = NULL,
         choices = c('Chemical stressor'           = 'chemical',
@@ -3314,8 +3321,19 @@ server <- function(input, output, session) {
   # Shared helper: apply form inputs onto a plate data.frame
   .apply_meta_inputs <- function(plate, input) {
     nc <- .plate_cols(input$plateSize); nr <- .plate_rows(input$plateSize)
-    ptype <- input$meta_perturb_type
+    ptype      <- input$meta_perturb_type
+    fill_order <- input$meta_fill_order %||% 'row'
     plate$perturbation_type <- ptype
+
+    # Sort eligible well indices into column-major order (A1,B1,…,H1,A2,…)
+    # when the user selected column-by-column pipetting direction.
+    .reorder_elig <- function(elig) {
+      if (fill_order != 'col' || length(elig) == 0) return(elig)
+      wn  <- plate$well[elig]
+      col <- as.integer(sub('[A-Za-z]+', '', wn))
+      row <- match(sub('[0-9]+', '', toupper(wn)), LETTERS)
+      elig[order(col, row)]
+    }
 
     # Mark blank / control wells first so eligibility logic below can skip them
     blanks_pre <- .parse_wells(input$meta_blank_wells)
@@ -3341,7 +3359,7 @@ server <- function(input, output, session) {
       muts <- trimws(strsplit(input$meta_genetic_bg %||% '', ',')[[1]])
       muts <- muts[nzchar(muts)]
       if (length(muts) > 0) {
-        eligible <- which(!plate$is_blank & !plate$is_control)
+        eligible <- .reorder_elig(which(!plate$is_blank & !plate$is_control))
         if (length(eligible) > 0)
           plate$perturbation[eligible] <-
             muts[((seq_along(eligible) - 1L) %% length(muts)) + 1L]
@@ -3399,7 +3417,7 @@ server <- function(input, output, session) {
 
       # Perturbation: "drug" for all wells; "drug;mutation" for eligible wells
       if (nzchar(drug)) plate$perturbation <- drug
-      eligible <- which(!plate$is_blank & !plate$is_control)
+      eligible <- .reorder_elig(which(!plate$is_blank & !plate$is_control))
       if (length(muts) > 0 && length(eligible) > 0) {
         well_muts <- muts[((seq_along(eligible) - 1L) %% length(muts)) + 1L]
         plate$perturbation[eligible] <- if (nzchar(drug))
@@ -3410,8 +3428,8 @@ server <- function(input, output, session) {
       # Temperature IS the perturbation — no chemical concentration
       plate$concentration <- 0
 
-      # Fill temperatures only into non-blank, non-control wells, in reading order
-      eligible <- which(!plate$is_blank & !plate$is_control)
+      # Fill temperatures only into non-blank, non-control wells, in pipetting order
+      eligible <- .reorder_elig(which(!plate$is_blank & !plate$is_control))
       n_elig   <- length(eligible)
 
       if (n_elig > 0) {
@@ -3436,10 +3454,10 @@ server <- function(input, output, session) {
     # Optional fields (only if panel is open and inputs exist)
     if (!is.null(input$meta_medium_state))
       plate$medium_state <- input$meta_medium_state
-    # Replicate sequence: cycle across all wells that are not blank and not control
+    # Replicate sequence: cycle across all wells in pipetting order
     rep_labels <- .parse_replicate_seq(input$meta_replicate_seq %||% '')
     if (length(rep_labels) > 0) {
-      eligible <- which(!plate$is_blank & !plate$is_control)
+      eligible <- .reorder_elig(which(!plate$is_blank & !plate$is_control))
       if (length(eligible) > 0)
         plate$replicate[eligible] <-
           rep_labels[((seq_along(eligible) - 1L) %% length(rep_labels)) + 1L]
