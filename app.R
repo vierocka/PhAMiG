@@ -1409,11 +1409,12 @@ server <- function(input, output, session) {
   detail_dataset_id    <- reactiveVal(NULL)   # which of the selected datasets to show in Links / QC
   dataset_results      <- reactiveVal(data.frame())
   comp_filtered_rv     <- reactiveVal(data.frame())
-  comp_upload_rv       <- reactiveVal(NULL)
-  comp_upload_valid    <- reactiveVal(FALSE)
-  comp_upload_tried    <- reactiveVal(FALSE)  # TRUE once user picks a file; FALSE after Clear
-  comp_well_meta_rv    <- reactiveVal(NULL)   # parsed metadata CSV; NULL = manual mode
-  comp_replicates_rv   <- reactiveVal(list()) # named list: well → integer group ID
+  comp_upload_rv         <- reactiveVal(NULL)
+  comp_upload_valid      <- reactiveVal(FALSE)
+  comp_upload_tried      <- reactiveVal(FALSE)  # TRUE once user picks a file; FALSE after Clear
+  comp_upload_n_plates   <- reactiveVal(1L)      # >1 for multi-sheet Excel
+  comp_well_meta_rv      <- reactiveVal(NULL)   # parsed metadata CSV; NULL = manual mode
+  comp_replicates_rv     <- reactiveVal(list()) # named list: well → integer group ID
   comp_email_status    <- reactiveVal('')
   analyze_selected_ids <- reactiveVal(character(0))  # passed from Search Data
   analyse_mode_rv      <- reactiveVal(NULL)           # 'A', 'B', or 'C'
@@ -2289,7 +2290,7 @@ server <- function(input, output, session) {
         uiOutput('comp_well_meta_status'),
         fluidRow(
           column(10,
-            conditionalPanel('output.comp_has_well_meta !== true',
+            conditionalPanel('output.comp_has_well_meta !== true && output.comp_is_multiplate !== true',
               # Click-mode controls live outside renderUI so they don't reset on re-render
               tags$div(style = 'display:flex; align-items:center; gap:10px; margin-bottom:4px; flex-wrap:wrap;',
                 tags$small(style = 'font-weight:600; color:#555;', 'Click mode:'),
@@ -2314,6 +2315,25 @@ server <- function(input, output, session) {
                 ),
                 column(6,
                   selectizeInput('comp_upload_controls', 'Control wells (shown in black)',
+                                 choices = NULL, multiple = TRUE,
+                                 options = list(placeholder = 'none selected'))
+                )
+              )
+            ),
+            # Multi-plate Excel: show compact blank/control pickers without the plate grid
+            conditionalPanel('output.comp_is_multiplate === true && output.comp_has_well_meta !== true',
+              tags$div(class = 'alert alert-info', style = 'font-size:12px; padding:6px 10px; margin-bottom:6px;',
+                icon('layer-group'),
+                uiOutput('comp_multiplate_info')
+              ),
+              fluidRow(
+                column(6,
+                  selectizeInput('comp_upload_blanks', 'Blank wells (all plates)',
+                                 choices = NULL, multiple = TRUE,
+                                 options = list(placeholder = 'none selected'))
+                ),
+                column(6,
+                  selectizeInput('comp_upload_controls', 'Control wells (all plates)',
                                  choices = NULL, multiple = TRUE,
                                  options = list(placeholder = 'none selected'))
                 )
@@ -2501,6 +2521,7 @@ server <- function(input, output, session) {
     comp_upload_rv(NULL)
     comp_upload_valid(FALSE)
     comp_upload_tried(FALSE)
+    comp_upload_n_plates(1L)
     comp_well_meta_rv(NULL)
     comp_replicates_rv(list())
     updateSelectizeInput(session, 'comp_upload_blanks',
@@ -2693,42 +2714,70 @@ server <- function(input, output, session) {
   observeEvent(input$comp_upload_file, {
     req(input$comp_upload_file)
     comp_upload_tried(TRUE)
-    path <- tryCatch(
-      qres_normalise_to_csv(input$comp_upload_file$datapath),
-      error = function(e) { comp_upload_valid(FALSE); comp_upload_rv(NULL); NULL })
-    req(!is.null(path))
-    check <- tryCatch(qres_validate_raw_csv(path), error = function(e) list(ok = FALSE, issues = conditionMessage(e)))
-    if (!isTRUE(check$ok)) {
-      comp_upload_valid(FALSE)
-      comp_upload_rv(NULL)
-      return()
+    raw_path  <- input$comp_upload_file$datapath
+    is_excel  <- grepl('\\.xlsx?$', input$comp_upload_file$name, ignore.case = TRUE)
+    n_sheets  <- if (is_excel && requireNamespace('readxl', quietly = TRUE))
+                   length(readxl::excel_sheets(raw_path)) else 1L
+
+    if (is_excel && n_sheets > 1L) {
+      # Multi-plate Excel: combine all sheets; bypass single-plate CSV validator
+      long <- tryCatch(
+        qres_excel_to_long(raw_path, dataset_id = '__upload__'),
+        error = function(e) NULL)
+      if (is.null(long) || nrow(long) == 0) { comp_upload_valid(FALSE); comp_upload_rv(NULL); return() }
+      comp_upload_rv(long)
+      comp_upload_valid(TRUE)
+      comp_upload_n_plates(n_sheets)
+    } else {
+      # Single plate: CSV or single-sheet Excel
+      path <- tryCatch(
+        qres_normalise_to_csv(raw_path),
+        error = function(e) { comp_upload_valid(FALSE); comp_upload_rv(NULL); NULL })
+      req(!is.null(path))
+      check <- tryCatch(qres_validate_raw_csv(path),
+                        error = function(e) list(ok = FALSE, issues = conditionMessage(e)))
+      if (!isTRUE(check$ok)) { comp_upload_valid(FALSE); comp_upload_rv(NULL); return() }
+      long <- tryCatch(qres_raw_to_long(path, dataset_id = '__upload__'), error = function(e) NULL)
+      if (is.null(long) || nrow(long) == 0) { comp_upload_valid(FALSE); return() }
+      comp_upload_rv(as.data.frame(long))
+      comp_upload_valid(TRUE)
+      comp_upload_n_plates(1L)
     }
-    long <- tryCatch(
-      qres_raw_to_long(path, dataset_id = '__upload__'),
-      error = function(e) NULL)
-    if (is.null(long) || nrow(long) == 0) { comp_upload_valid(FALSE); return() }
-    comp_upload_rv(as.data.frame(long))
-    comp_upload_valid(TRUE)
-    wells <- unique(long$well)
+    wells <- unique(comp_upload_rv()$well)
     updateSelectizeInput(session, 'comp_upload_blanks',   choices = wells, server = TRUE)
     updateSelectizeInput(session, 'comp_upload_controls', choices = wells, server = TRUE)
   })
 
   output$comp_upload_status <- renderUI({
     if (!isTRUE(comp_upload_tried())) return(NULL)
-    if (isTRUE(comp_upload_valid()))
+    if (isTRUE(comp_upload_valid())) {
+      raw      <- comp_upload_rv()
+      n_plates <- comp_upload_n_plates()
+      plate_lbl <- if (n_plates > 1L)
+        sprintf(', %d plates', n_plates) else ''
       tags$small(style = 'color:#27ae60;', icon('check'),
-        sprintf(' Valid — %d wells, %d time-points.',
-                length(unique(comp_upload_rv()$well)),
-                length(unique(comp_upload_rv()$time_h))))
-    else
+        sprintf(' Valid — %d wells, %d time-points%s.',
+                length(unique(raw$well)), length(unique(raw$time_h)), plate_lbl))
+    } else
       tags$small(style = 'color:#e74c3c;', icon('times'), ' Invalid format — check column names.')
   })
 
   output$comp_has_well_meta  <- reactive({ !is.null(comp_well_meta_rv()) })
   output$comp_has_replicates <- reactive({ length(comp_replicates_rv()) > 0 })
+  output$comp_is_multiplate  <- reactive({ isTRUE(comp_upload_n_plates() > 1L) })
   outputOptions(output, 'comp_has_well_meta',  suspendWhenHidden = FALSE)
   outputOptions(output, 'comp_has_replicates', suspendWhenHidden = FALSE)
+  outputOptions(output, 'comp_is_multiplate',  suspendWhenHidden = FALSE)
+
+  output$comp_multiplate_info <- renderUI({
+    n <- comp_upload_n_plates()
+    raw <- comp_upload_rv()
+    if (is.null(raw)) return(NULL)
+    n_wells <- length(unique(raw$well))
+    n_tp    <- length(unique(raw$time_h[raw$plate_id == unique(raw$plate_id)[[1]]]))
+    tags$span(sprintf('%d plates loaded (%d wells × %d time-points each). Blank/control selection applies to all plates by well name.',
+                      n, n_wells, n_tp))
+  })
 
   .REP_PALETTE <- c('#e74c3c','#3498db','#2ecc71','#f39c12',
                     '#9b59b6','#1abc9c','#e67e22','#16a085')

@@ -13,9 +13,28 @@
 # well_metadata is populated by qres_import_metadata() (summary row) or
 # qres_import_plate_template() (per-well rows). This file does NOT touch well_metadata.
 
+# Fix a data.frame read from Excel so it is safe to write to CSV and re-parse:
+#   - Time column stored as POSIXct (Excel HH:MM:SS) → decimal hours from t=0
+#   - OD value columns stored as character → numeric where >90% parseable
+.fix_excel_df <- function(df) {
+  time_col <- names(df)[grepl('time', names(df), ignore.case = TRUE)][1]
+  if (!is.na(time_col) && inherits(df[[time_col]], c('POSIXct', 'POSIXt'))) {
+    t_sec <- as.numeric(df[[time_col]])
+    df[[time_col]] <- (t_sec - t_sec[[1]]) / 3600
+  }
+  for (cn in names(df)) {
+    if (!is.null(time_col) && !is.na(time_col) && cn == time_col) next
+    if (is.character(df[[cn]])) {
+      num <- suppressWarnings(as.numeric(df[[cn]]))
+      if (mean(is.na(num), na.rm = TRUE) <= 0.1) df[[cn]] <- num
+    }
+  }
+  df
+}
+
 # Normalise any supported file format to a CSV path ready for fread.
-# For Excel files (.xlsx / .xls) the first sheet is extracted to a temp CSV.
-# Returns the path to use with fread / qres_validate_raw_csv.
+# For Excel files (.xlsx / .xls) the FIRST sheet is extracted to a temp CSV.
+# POSIXct time columns are converted to decimal hours. Returns the CSV path.
 qres_normalise_to_csv <- function(path) {
   if (!grepl('\\.xlsx?$', path, ignore.case = TRUE)) return(path)
   if (!requireNamespace('readxl', quietly = TRUE))
@@ -23,9 +42,46 @@ qres_normalise_to_csv <- function(path) {
   sheets <- readxl::excel_sheets(path)
   df     <- as.data.frame(readxl::read_excel(path, sheet = sheets[[1]],
                                               col_names = TRUE, .name_repair = 'minimal'))
+  df     <- .fix_excel_df(df)
   tmp    <- tempfile(fileext = '.csv')
   utils::write.csv(df, tmp, row.names = FALSE)
   tmp
+}
+
+# Read a multi-sheet Excel file into one combined long-format data.frame.
+# Each sheet = one plate; plate_id = <dataset_id>__plate_<i>.
+# Returns the same column structure as qres_raw_to_long().
+qres_excel_to_long <- function(path, dataset_id = '__upload__', signal_type = 'OD600') {
+  requireNamespace('data.table')
+  if (!requireNamespace('readxl', quietly = TRUE))
+    stop('Package "readxl" is required for Excel uploads.')
+  sheets <- readxl::excel_sheets(path)
+  long_list <- lapply(seq_along(sheets), function(i) {
+    plate_id <- paste0(dataset_id, '__plate_', i)
+    df  <- as.data.frame(readxl::read_excel(path, sheet = sheets[[i]],
+                                             col_names = TRUE, .name_repair = 'minimal'))
+    df  <- .fix_excel_df(df)
+    tmp <- tempfile(fileext = '.csv')
+    utils::write.csv(df, tmp, row.names = FALSE)
+    dt  <- .strip_empty(data.table::fread(tmp, fill = TRUE))
+    time_col <- names(dt)[grepl('time', names(dt), ignore.case = TRUE)][[1]]
+    if (is.na(time_col)) return(NULL)
+    long <- data.table::melt(dt, id.vars = time_col,
+                              variable.name = 'well', value.name = 'value',
+                              variable.factor = FALSE)
+    data.table::setnames(long, time_col, 'time_h')
+    long[, time_h     := .parse_time_to_hours(as.character(time_h))]
+    long[, dataset_id  := dataset_id]
+    long[, plate_id    := plate_id]
+    long[, well_id     := paste(dataset_id, plate_id, well, sep = '__')]
+    long[, signal_type := signal_type]
+    data.table::setcolorder(long, c('dataset_id', 'plate_id', 'well_id',
+                                     'well', 'time_h', 'signal_type', 'value'))
+    long[]
+  })
+  long_list <- Filter(Negate(is.null), long_list)
+  if (length(long_list) == 0L) return(NULL)
+  as.data.frame(data.table::rbindlist(long_list))
 }
 
 # Remove all-NA / all-empty rows and columns from a data.table.
