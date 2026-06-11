@@ -592,9 +592,7 @@ ui_search <- fluidPage(
 
   # ── Result count ─────────────────────────────────────────────────────────────
   fluidRow(
-    column(8, uiOutput('search_result_bar')),
-    column(4, align = 'right', br(),
-      uiOutput('search_mode_badge'))
+    column(12, uiOutput('search_result_bar'))
   ),
 
   # ── Two-column: facets + table ───────────────────────────────────────────────
@@ -1515,15 +1513,6 @@ server <- function(input, output, session) {
 
   # ── Search ─────────────────────────────────────────────────────────────────
   # Show which LLM backend is active (none = rule-based only, no key needed)
-  output$search_mode_badge <- renderUI({
-    backend <- tryCatch(qres_llm_backend_name(), error = function(e) 'none')
-    switch(backend,
-      'anthropic' = tags$small(style = 'color:#5cb85c;', '● NL: Anthropic Claude'),
-      'ollama'    = tags$small(style = 'color:#5cb85c;', '● NL: local Ollama'),
-      tags$small(style = 'color:#888;', '● NL: rule-based (always on)')
-    )
-  })
-
   # Result count bar
   output$search_result_bar <- renderUI({
     n_all <- nrow(dataset_results())
