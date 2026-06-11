@@ -1825,13 +1825,16 @@ server <- function(input, output, session) {
     content  = function(file) write.csv(display_results(), file, row.names = FALSE)
   )
 
-  observeEvent(input$dataset_table_rows_selected, {
+  observeEvent(input$dataset_table_rows_selected, ignoreNULL = FALSE, {
     df  <- display_results()
     row <- input$dataset_table_rows_selected
     if (length(row) >= 1 && nrow(df) >= row[1]) {
       id <- df$dataset_id[row[1]]
       selected_dataset(id)
-      detail_dataset_id(id)   # reset detail view to first selected row
+      detail_dataset_id(id)
+    } else {
+      selected_dataset(NULL)
+      detail_dataset_id(NULL)
     }
   })
 
