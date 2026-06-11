@@ -1437,6 +1437,10 @@ server <- function(input, output, session) {
     if (!is.na(y_hi) && 'year' %in% names(df))
       df <- df[!is.na(df$year) & df$year <= y_hi, ]
 
+    # Normalize author display: "SMITH, J." → "Smith, J." regardless of how they were uploaded
+    if ('authors' %in% names(df))
+      df$authors <- tools::toTitleCase(tolower(as.character(df$authors %||% '')))
+
     df
   })
 
@@ -1543,25 +1547,57 @@ server <- function(input, output, session) {
     df <- display_results()
     if (nrow(df) == 0) return(NULL)
 
+    # Show first 2 items always; rest behind a toggle link
     .block <- function(title, vals) {
       vals <- as.character(vals)
-      vals <- vals[!is.na(vals) & nzchar(vals)]
+      vals <- vals[!is.na(vals) & nzchar(vals) & vals != 'NA']
       if (length(vals) == 0) return(NULL)
       counts <- sort(table(vals), decreasing = TRUE)
-      rows <- lapply(seq_along(counts), function(i)
+      n <- length(counts)
+      uid <- paste0('facet_more_', tolower(gsub('[^a-z0-9]', '', title)))
+
+      make_row <- function(i)
         tags$div(class = 'facet-row',
           tags$span(names(counts)[i]),
-          tags$span(class = 'facet-count', as.integer(counts[i]))))
-      tagList(tags$h6(title), rows, tags$hr(style = 'margin:5px 0;'))
+          tags$span(class = 'facet-count', as.integer(counts[i])))
+
+      visible <- lapply(seq_len(min(2L, n)), make_row)
+
+      more <- if (n > 2) {
+        hidden_rows <- lapply(seq(3L, n), make_row)
+        n_more <- n - 2L
+        list(
+          tags$div(id = uid, style = 'display:none;', hidden_rows),
+          tags$a(
+            href    = '#',
+            style   = 'font-size:11px; color:#999; cursor:pointer; display:block; margin-top:2px;',
+            onclick = sprintf(
+              paste0("var e=document.getElementById('%s');",
+                     "var open=e.style.display!=='none';",
+                     "e.style.display=open?'none':'';",
+                     "this.textContent=open?'Show %d more…':'Show less';",
+                     "return false;"),
+              uid, n_more),
+            sprintf('Show %d more…', n_more)
+          )
+        )
+      } else list()
+
+      tagList(tags$h6(title), visible, more, tags$hr(style = 'margin:5px 0;'))
     }
 
+    # Authors: keep only the surname (first token before comma); already title-cased in display_results()
     short_auth <- trimws(sub(',.*', '', as.character(df$authors %||% '')))
+    # Perturbation: skip NA / empty / 'none' / 'NA'
+    perturb_vals <- as.character(df$perturbation %||% '')
+    perturb_vals[perturb_vals %in% c('NA', 'none', 'None', '')] <- NA
 
     tags$div(class = 'facet-panel',
-      .block('Species',     df$species),
-      .block('Temperature', paste0(df$temperature_c, ' °C')),
-      .block('Medium',      df$medium_type),
-      .block('Authors',     short_auth)
+      .block('Species',      df$species),
+      .block('Perturbation', perturb_vals),
+      .block('Temperature',  paste0(df$temperature_c, ' °C')),
+      .block('Medium',       df$medium_type),
+      .block('Authors',      short_auth)
     )
   })
 
