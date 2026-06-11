@@ -2604,6 +2604,71 @@ server <- function(input, output, session) {
           br(),
           DT::DTOutput('comp_selected_summary')
         ),
+        # Blank / control wells — same input IDs as Mode A; Mode B exclusive so no ID clash
+        fluidRow(
+          column(6,
+            tags$label('Blank wells', class = 'control-label'),
+            tags$div(style = 'display:flex; gap:4px; margin-bottom:3px;',
+              tags$input(id = 'comp_blank_range_txt', type = 'text',
+                class = 'form-control input-sm',
+                placeholder = 'e.g. E12:H12 or A1,B1',
+                style = 'height:28px; font-size:12px;'),
+              tags$button(id = 'comp_blank_range_btn', type = 'button',
+                class = 'btn btn-sm btn-default', style = 'height:28px; white-space:nowrap;',
+                icon('plus'), ' Add')
+            ),
+            uiOutput('comp_blank_range_status'),
+            selectizeInput('comp_upload_blanks', NULL,
+                           choices = NULL, multiple = TRUE,
+                           options = list(placeholder = 'none selected')),
+            tags$div(style = 'margin-top:2px;',
+              checkboxInput('comp_autodetect_blanks',
+                tags$span(style = 'font-size:11px; font-weight:normal;',
+                  icon('wand-magic-sparkles', style = 'font-size:10px; color:#888;'),
+                  ' Auto-detect from OD signal'),
+                value = FALSE),
+              conditionalPanel('input.comp_autodetect_blanks === true',
+                uiOutput('comp_autodetect_result')
+              )
+            )
+          ),
+          column(6,
+            tags$label('Control wells', class = 'control-label'),
+            tags$div(style = 'display:flex; gap:4px; margin-bottom:3px;',
+              tags$input(id = 'comp_ctrl_range_txt', type = 'text',
+                class = 'form-control input-sm',
+                placeholder = 'e.g. A12:H12',
+                style = 'height:28px; font-size:12px;'),
+              tags$button(id = 'comp_ctrl_range_btn', type = 'button',
+                class = 'btn btn-sm btn-default', style = 'height:28px; white-space:nowrap;',
+                icon('plus'), ' Add')
+            ),
+            uiOutput('comp_ctrl_range_status'),
+            selectizeInput('comp_upload_controls', NULL,
+                           choices = NULL, multiple = TRUE,
+                           options = list(placeholder = 'none selected'))
+          )
+        ),
+        tags$script(HTML("
+          $(document).on('keyup', '#comp_blank_range_txt,#comp_ctrl_range_txt', function(e) {
+            if (e.keyCode === 13) {
+              var btn = this.id === 'comp_blank_range_txt'
+                        ? 'comp_blank_range_btn' : 'comp_ctrl_range_btn';
+              Shiny.setInputValue(btn, Math.random(), {priority:'event'});
+              Shiny.setInputValue(this.id + '_val', this.value, {priority:'event'});
+              this.value = '';
+            }
+          });
+          $(document).on('click', '#comp_blank_range_btn,#comp_ctrl_range_btn', function() {
+            var txt_id = this.id === 'comp_blank_range_btn'
+                         ? 'comp_blank_range_txt' : 'comp_ctrl_range_txt';
+            var el = document.getElementById(txt_id);
+            Shiny.setInputValue(this.id + '_val', el ? el.value : '', {priority:'event'});
+            Shiny.setInputValue(this.id, Math.random(), {priority:'event'});
+            if (el) el.value = '';
+          });
+        ")),
+        hr(style = 'margin:10px 0;'),
         tabsetPanel(id = 'mode_b_tabs',
           tabPanel('Growth curves',   br(), uiOutput('comp_curves_ui')),
           tabPanel('Tool benchmarking', br(), uiOutput('comp_comparison_ui'))
@@ -2667,6 +2732,17 @@ server <- function(input, output, session) {
 
   # "+ Add my own file" in Mode B → upgrade to C
   observeEvent(input$comp_upgrade_to_c, analyse_mode_rv('C'))
+
+  # Mode B: populate blank/control selectize choices from repo wells, then auto-show auto-detect
+  observe({
+    req((analyse_mode_rv() %||% '') == 'B')
+    raw <- tryCatch(comp_all_raw(), error = function(e) NULL)
+    req(!is.null(raw) && nrow(raw) > 0)
+    wells <- sort(unique(raw$well))
+    updateSelectizeInput(session, 'comp_upload_blanks',   choices = wells, server = TRUE)
+    updateSelectizeInput(session, 'comp_upload_controls', choices = wells, server = TRUE)
+    updateCheckboxInput(session, 'comp_autodetect_blanks', value = TRUE)
+  })
 
   # Clear all filter inputs (Mode B / C)
   observeEvent(input$comp_clear_filters, {
@@ -2924,6 +3000,7 @@ server <- function(input, output, session) {
     wells <- unique(comp_upload_rv()$well)
     updateSelectizeInput(session, 'comp_upload_blanks',   choices = wells, server = TRUE)
     updateSelectizeInput(session, 'comp_upload_controls', choices = wells, server = TRUE)
+    updateCheckboxInput(session, 'comp_autodetect_blanks', value = TRUE)
   })
 
   output$comp_upload_status <- renderUI({
@@ -3115,10 +3192,10 @@ server <- function(input, output, session) {
       else NULL)
   }, ignoreNULL = TRUE, ignoreInit = TRUE)
 
-  # Per-well mean + sd across all timepoints; flags wells where mean + sd < 0.05.
-  # Those are candidates to be blanks (flat, near-zero OD throughout the run).
+  # Criterion: sd < 0.05 across all timepoints — flat wells are blanks regardless of mean.
+  # Falls back to repo data in Mode B (no file uploaded).
   comp_blank_candidates <- reactive({
-    raw <- comp_upload_rv()
+    raw <- comp_upload_rv() %||% tryCatch(comp_all_raw(), error = function(e) NULL)
     if (is.null(raw) || nrow(raw) == 0)
       return(data.frame(well = character(0), mean_od = numeric(0),
                         sd_od = numeric(0), candidate = logical(0)))
@@ -3129,9 +3206,9 @@ server <- function(input, output, session) {
           sd_od   = sd(value,   na.rm = TRUE),
           .groups = 'drop'),
         sd_od     = dplyr::coalesce(sd_od, 0),
-        candidate = (mean_od + sd_od) < 0.05
+        candidate = sd_od < 0.05
       ),
-      mean_od
+      sd_od
     )
   })
 
@@ -3142,12 +3219,12 @@ server <- function(input, output, session) {
     cands <- df$well[df$candidate]
     if (length(cands) == 0)
       return(tags$div(style = 'font-size:12px; color:#888; padding:2px 0;',
-        icon('circle-info'), ' No wells found with mean + sd < 0.05.'))
+        icon('circle-info'), ' No flat wells detected (sd >= 0.05 for all wells).'))
     tagList(
       tags$div(style = 'font-size:12px; margin-bottom:3px;',
         tags$strong(length(cands)),
         tags$span(style = 'color:#555;',
-          sprintf(' candidate blank%s (mean + sd < 0.05 OD):',
+          sprintf(' candidate blank%s (OD sd < 0.05):',
                   if (length(cands) > 1) 's' else ''))
       ),
       tags$div(
@@ -3409,7 +3486,7 @@ server <- function(input, output, session) {
     blank_ids_db <- if (length(ids) > 0)
       tryCatch(qres_get_blank_wells(con, ids), error = function(e) character(0))
     else character(0)
-    blank_ids_up <- if (has_up) input$comp_upload_blanks %||% character(0) else character(0)
+    blank_ids_up <- input$comp_upload_blanks %||% character(0)
     has_blanks   <- length(c(blank_ids_db, blank_ids_up)) > 0
     tagList(
       tags$div(
@@ -3446,8 +3523,7 @@ server <- function(input, output, session) {
     bids <- if (bm == 'blank_wells')
       tryCatch(qres_get_blank_wells(con, comp_active_ids()), error = function(e) character(0))
     else character(0)
-    if (bm == 'blank_wells' && comp_has_upload())
-      bids <- c(bids, input$comp_upload_blanks %||% character(0))
+    bids <- c(bids, input$comp_upload_blanks %||% character(0))
     .apply_baseline(raw, method = bm, blank_ids = bids)
   })
 
@@ -3561,7 +3637,7 @@ server <- function(input, output, session) {
     bids <- if (length(ids) > 0)
       tryCatch(qres_get_blank_wells(con, ids), error = function(e) character(0))
     else character(0)
-    if (comp_has_upload()) bids <- c(bids, input$comp_upload_blanks %||% character(0))
+    bids <- c(bids, input$comp_upload_blanks %||% character(0))
     if (length(bids) > 0)
       tags$small(style = 'color:#27ae60;',
         icon('check'), sprintf(' %d blank well(s) found.', length(bids)))
