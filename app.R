@@ -700,6 +700,17 @@ ui_analyse <- fluidPage(
     .ac-label     { font-weight: 700; font-size: 15px; color: #1a3a5c; margin-bottom: 3px; }
     .ac-sub       { color: #888; font-size: 12px; }
     .ac-active .ac-label { color: #1a6ba0; }
+    /* ── plate map ── */
+    .plate-map-wrap { overflow-x: auto; margin: 2px 0 6px; }
+    .pm-table { border-collapse: collapse; }
+    .pm-table th { font-size:10px; color:#888; padding:1px 3px; text-align:center; font-weight:normal; }
+    .pm-table td { width:26px; height:26px; border:1px solid #ccc; cursor:pointer; text-align:center;
+                   font-size:9px; vertical-align:middle; transition:opacity .12s; }
+    .pm-table td:hover { opacity:.72; }
+    .pm-empty  { background:#f0f0f0 !important; cursor:default !important; pointer-events:none; }
+    .pm-active { background:#d5e8f5; color:#444; }
+    .pm-blank  { background:#ffd700; color:#333; }
+    .pm-ctrl   { background:#2c2c2c; color:#fff; }
   '))),
   tags$script(HTML("
     Shiny.addCustomMessageHandler('setAnalyseMode', function(data) {
@@ -1394,6 +1405,7 @@ server <- function(input, output, session) {
   comp_upload_rv       <- reactiveVal(NULL)
   comp_upload_valid    <- reactiveVal(FALSE)
   comp_upload_tried    <- reactiveVal(FALSE)  # TRUE once user picks a file; FALSE after Clear
+  comp_well_meta_rv    <- reactiveVal(NULL)   # parsed metadata CSV; NULL = manual mode
   comp_email_status    <- reactiveVal('')
   analyze_selected_ids <- reactiveVal(character(0))  # passed from Search Data
   analyse_mode_rv      <- reactiveVal(NULL)           # 'A', 'B', or 'C'
@@ -2257,29 +2269,41 @@ server <- function(input, output, session) {
       conditionalPanel('output.comp_upload_ready === true',
         hr(),
         fluidRow(
-          column(6,
-            tags$b('Select wells to analyze', style = 'font-size:12px;'),
-            br(), br(),
-            DT::DTOutput('comp_upload_well_dt')
+          column(12,
+            fileInput('comp_well_meta_file',
+              tags$span('Well annotations',
+                tags$small(' (optional — CSV with well + type columns)', style = 'color:#888;')),
+              accept = '.csv', width = '100%')
+          )
+        ),
+        uiOutput('comp_well_meta_status'),
+        fluidRow(
+          column(7,
+            conditionalPanel('output.comp_has_well_meta !== true',
+              uiOutput('comp_plate_map'),
+              fluidRow(
+                column(6,
+                  selectizeInput('comp_upload_blanks', 'Blank wells',
+                                 choices = NULL, multiple = TRUE,
+                                 options = list(placeholder = 'none selected'))
+                ),
+                column(6,
+                  selectizeInput('comp_upload_controls', 'Control wells (shown in black)',
+                                 choices = NULL, multiple = TRUE,
+                                 options = list(placeholder = 'none selected'))
+                )
+              )
+            ),
+            conditionalPanel('output.comp_has_well_meta === true',
+              uiOutput('comp_well_meta_summary')
+            )
           ),
-          column(6,
-            withSpinner(plotOutput('comp_upload_preview', height = '190px'),
+          column(5,
+            withSpinner(plotOutput('comp_upload_preview', height = '300px'),
                         type = 6, color = '#5b9bd5')
           )
         ),
         br(),
-        fluidRow(
-          column(6,
-            selectizeInput('comp_upload_blanks', 'Blank wells',
-                           choices = NULL, multiple = TRUE,
-                           options = list(placeholder = 'none selected'))
-          ),
-          column(6,
-            selectizeInput('comp_upload_controls', 'Control wells (shown in black)',
-                           choices = NULL, multiple = TRUE,
-                           options = list(placeholder = 'none selected'))
-          )
-        ),
         fluidRow(column(12,
           actionButton('comp_clear_upload', icon('trash'), ' Clear data',
                        class = 'btn-sm btn-danger',
@@ -2444,6 +2468,7 @@ server <- function(input, output, session) {
     comp_upload_rv(NULL)
     comp_upload_valid(FALSE)
     comp_upload_tried(FALSE)
+    comp_well_meta_rv(NULL)
     updateSelectizeInput(session, 'comp_upload_blanks',
                          choices = character(0), selected = character(0))
     updateSelectizeInput(session, 'comp_upload_controls',
@@ -2663,25 +2688,144 @@ server <- function(input, output, session) {
       tags$small(style = 'color:#e74c3c;', icon('times'), ' Invalid format — check column names.')
   })
 
-  output$comp_upload_well_dt <- DT::renderDT({
-    req(comp_upload_valid())
-    raw   <- comp_upload_rv()
-    wells <- unique(raw$well)
-    DT::datatable(
-      data.frame(Well = wells, stringsAsFactors = FALSE),
-      rownames = FALSE, selection = list(mode = 'multiple', selected = seq_along(wells)),
-      options  = list(dom = 'tp', pageLength = 20, scrollY = '200px', scrollCollapse = TRUE))
-  }, server = FALSE)
+  output$comp_has_well_meta <- reactive({ !is.null(comp_well_meta_rv()) })
+  outputOptions(output, 'comp_has_well_meta', suspendWhenHidden = FALSE)
+
+  output$comp_plate_map <- renderUI({
+    req(comp_upload_valid(), is.null(comp_well_meta_rv()))
+    raw      <- comp_upload_rv()
+    wells_in <- unique(raw$well)
+    blanks   <- input$comp_upload_blanks   %||% character(0)
+    controls <- input$comp_upload_controls %||% character(0)
+    mode_sel <- input$plate_click_mode %||% 'blank'
+
+    row_letters <- sort(unique(sub('[0-9]+', '', wells_in)))
+    col_nums    <- sort(as.integer(unique(sub('[A-Za-z]+', '', wells_in))))
+    all_rows    <- LETTERS[seq_len(max(match(row_letters, LETTERS), 8))]
+    all_cols    <- seq_len(max(col_nums, 12))
+
+    header <- tags$tr(
+      tags$th('', style = 'min-width:18px;'),
+      lapply(all_cols, function(cc)
+        tags$th(cc, style = 'min-width:26px;'))
+    )
+    body_rows <- lapply(all_rows, function(rr) {
+      cells <- lapply(all_cols, function(cc) {
+        wname <- paste0(rr, cc)
+        if (!wname %in% wells_in)
+          return(tags$td(class = 'pm-empty', title = wname))
+        cls <- if (wname %in% blanks) 'pm-blank'
+               else if (wname %in% controls) 'pm-ctrl'
+               else 'pm-active'
+        tags$td(class = cls, title = wname,
+          onclick = sprintf("Shiny.setInputValue('plate_well_click','%s',{priority:'event'})", wname),
+          wname)
+      })
+      tags$tr(tags$th(rr), cells)
+    })
+
+    legend <- tags$div(style = 'font-size:11px; color:#888; margin-top:5px;',
+      lapply(list(c('#ffd700','#333','Blank'), c('#2c2c2c','#fff','Control'),
+                  c('#d5e8f5','#444','Active')), function(x)
+        tags$span(style = sprintf('margin-right:10px;'),
+          tags$span(style = sprintf('display:inline-block;width:11px;height:11px;background:%s;border:1px solid #bbb;vertical-align:middle;margin-right:3px;', x[1])),
+          x[3])))
+
+    tagList(
+      tags$div(style = 'display:flex; align-items:center; gap:10px; margin-bottom:4px;',
+        tags$small(style = 'font-weight:600; color:#555;', 'Click mode:'),
+        radioButtons('plate_click_mode', NULL, inline = TRUE,
+                     choices = c('Blank' = 'blank', 'Control' = 'control', 'Clear' = 'clear'),
+                     selected = mode_sel)
+      ),
+      tags$div(class = 'plate-map-wrap',
+        tags$table(class = 'pm-table', header, body_rows)
+      ),
+      legend
+    )
+  })
+
+  output$comp_well_meta_status <- renderUI({
+    meta <- comp_well_meta_rv()
+    if (is.null(meta)) return(NULL)
+    blanks   <- input$comp_upload_blanks   %||% character(0)
+    controls <- input$comp_upload_controls %||% character(0)
+    tags$div(class = 'alert alert-success',
+             style = 'padding:5px 10px; font-size:12px; margin:4px 0;',
+      icon('check'), sprintf(' Annotations loaded — %d blank wells, %d control wells.',
+                             length(blanks), length(controls))
+    )
+  })
+
+  output$comp_well_meta_summary <- renderUI({
+    if (is.null(comp_well_meta_rv())) return(NULL)
+    blanks   <- input$comp_upload_blanks   %||% character(0)
+    controls <- input$comp_upload_controls %||% character(0)
+    tagList(
+      tags$p(style = 'color:#27ae60; font-size:13px; margin-bottom:4px;',
+             icon('circle-check'), ' Well annotations auto-detected'),
+      tags$p(style = 'font-size:12px; margin-bottom:2px;',
+             tags$strong('Blank wells: '),
+             if (length(blanks) == 0) tags$em('none') else paste(blanks, collapse = ', ')),
+      tags$p(style = 'font-size:12px;',
+             tags$strong('Control wells: '),
+             if (length(controls) == 0) tags$em('none') else paste(controls, collapse = ', '))
+    )
+  })
+
+  observeEvent(input$plate_well_click, {
+    wname    <- input$plate_well_click
+    mode_sel <- input$plate_click_mode %||% 'blank'
+    raw      <- comp_upload_rv()
+    req(!is.null(raw))
+    wells  <- unique(raw$well)
+    blanks   <- input$comp_upload_blanks   %||% character(0)
+    controls <- input$comp_upload_controls %||% character(0)
+    if (mode_sel == 'blank') {
+      blanks   <- if (wname %in% blanks) setdiff(blanks, wname) else c(blanks, wname)
+      controls <- setdiff(controls, wname)
+    } else if (mode_sel == 'control') {
+      controls <- if (wname %in% controls) setdiff(controls, wname) else c(controls, wname)
+      blanks   <- setdiff(blanks, wname)
+    } else {
+      blanks   <- setdiff(blanks, wname)
+      controls <- setdiff(controls, wname)
+    }
+    updateSelectizeInput(session, 'comp_upload_blanks',   selected = blanks)
+    updateSelectizeInput(session, 'comp_upload_controls', selected = controls)
+  })
+
+  observeEvent(input$comp_well_meta_file, {
+    req(input$comp_well_meta_file)
+    path <- input$comp_well_meta_file$datapath
+    meta <- tryCatch(utils::read.csv(path, stringsAsFactors = FALSE), error = function(e) NULL)
+    if (is.null(meta) || !('well' %in% tolower(names(meta)))) {
+      showNotification('Well metadata CSV must have a "well" column.', type = 'error')
+      return()
+    }
+    names(meta) <- tolower(names(meta))
+    raw_wells   <- unique(comp_upload_rv()$well)
+    .norm <- function(x) sub('^([A-Za-z])0+', '\\1', trimws(toupper(x)))
+    meta$well <- .norm(meta$well)
+
+    if ('type' %in% names(meta)) {
+      blanks   <- meta$well[tolower(meta$type) %in% c('blank', 'blanks')]
+      controls <- meta$well[tolower(meta$type) %in% c('control', 'controls')]
+    } else {
+      blanks   <- if ('is_blank'   %in% names(meta)) meta$well[as.logical(meta$is_blank)   %in% TRUE] else character(0)
+      controls <- if ('is_control' %in% names(meta)) meta$well[as.logical(meta$is_control) %in% TRUE] else character(0)
+    }
+    blanks   <- intersect(.norm(blanks),   raw_wells)
+    controls <- intersect(.norm(controls), raw_wells)
+    updateSelectizeInput(session, 'comp_upload_blanks',   choices = raw_wells, selected = blanks,   server = TRUE)
+    updateSelectizeInput(session, 'comp_upload_controls', choices = raw_wells, selected = controls, server = TRUE)
+    comp_well_meta_rv(meta)
+  })
 
   output$comp_upload_preview <- renderPlot({
     req(comp_upload_valid())
-    raw  <- comp_upload_rv()
-    sel  <- input$comp_upload_well_dt_rows_selected
-    if (!is.null(sel) && length(sel) > 0) {
-      wells <- unique(raw$well)[sel]
-      raw   <- raw[raw$well %in% wells, ]
-    }
-    ctrl <- input$comp_upload_controls %||% character(0)
+    raw      <- comp_upload_rv()
+    ctrl     <- input$comp_upload_controls %||% character(0)
     ctrl_ids <- raw$well_id[raw$well %in% ctrl]
     qres_plot_growth(raw, log_y = FALSE, control_wells = ctrl_ids,
                      title = 'Uploaded curves')
@@ -2695,9 +2839,7 @@ server <- function(input, output, session) {
   })
 
   comp_has_upload <- reactive({
-    isTRUE(comp_upload_valid()) &&
-    !is.null(comp_upload_rv()) &&
-    length(input$comp_upload_well_dt_rows_selected) > 0
+    isTRUE(comp_upload_valid()) && !is.null(comp_upload_rv())
   })
 
   # ── Combined raw data (for growth curves) ──────────────────────────────────
@@ -2731,11 +2873,6 @@ server <- function(input, output, session) {
 
     if (has_up) {
       raw_up <- comp_upload_rv()
-      sel_r  <- input$comp_upload_well_dt_rows_selected
-      if (!is.null(sel_r) && length(sel_r) > 0) {
-        wells  <- unique(raw_up$well)[sel_r]
-        raw_up <- raw_up[raw_up$well %in% wells, ]
-      }
       raw_up$plot_label <- 'Uploaded data'
       raw_list <- c(raw_list, list(raw_up))
     }
@@ -2782,12 +2919,7 @@ server <- function(input, output, session) {
 
     all_cmp <- lapply(all_ids, function(did) {
       if (did == '__upload__') {
-        raw  <- comp_upload_rv()
-        selr <- input$comp_upload_well_dt_rows_selected
-        if (!is.null(selr) && length(selr) > 0) {
-          wells <- unique(raw$well)[selr]
-          raw   <- raw[raw$well %in% wells, ]
-        }
+        raw <- comp_upload_rv()
       } else {
         raw <- tryCatch(qres_get_raw_curves(con, did), error = function(e) NULL)
       }
@@ -2803,7 +2935,6 @@ server <- function(input, output, session) {
     })
     dplyr::bind_rows(Filter(Negate(is.null), all_cmp))
   }) |> bindCache(comp_active_ids(), comp_has_upload(),
-                  input$comp_upload_well_dt_rows_selected,
                   input$comp_tools, input$comp_baseline)
 
   # ── Wide table for download ─────────────────────────────────────────────────
@@ -2968,7 +3099,6 @@ server <- function(input, output, session) {
       facet_by = if (length(unique(combined[[facet_col]])) > 1) facet_col else NULL,
       log_y    = isTRUE(input$comp_boxplot_log_y))
   }) |> bindCache(comp_active_ids(), comp_has_upload(),
-                  input$comp_upload_well_dt_rows_selected,
                   input$comp_tools, input$comp_baseline,
                   input$comp_metric, input$comp_boxplot_log_y)
 
