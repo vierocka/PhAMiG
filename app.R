@@ -477,143 +477,199 @@ ui_metadata <- fluidPage(
 ui_search <- fluidPage(
   theme = shinytheme('cerulean'),
   tags$head(
-    tags$style(HTML('body { padding-bottom: 60px; }
-      /* Keep DT tables from overflowing their container */
+    tags$style(HTML('
+      body { padding-bottom: 60px; }
       .dataTables_wrapper { overflow-x: auto; }
       table.dataTable td { white-space: nowrap; }
+
+      /* Search hero */
+      .search-hero { max-width: 680px; margin: 0 auto 4px; text-align: center; }
+      .search-hero .form-group { margin-bottom: 4px; }
+      .search-hero .form-control {
+        font-size: 16px; height: 48px; border-radius: 8px;
+        border: 2px solid #c0d4e8; padding: 10px 16px;
+      }
+      .search-hero .form-control:focus { border-color: #2980b9; box-shadow: none; }
+      .search-examples { color: #777; font-size: 13px; margin: 2px 0 10px; }
+      .search-examples a { cursor: pointer; color: #2980b9; text-decoration: none; }
+      .search-examples a:hover { text-decoration: underline; }
+
+      /* Result bar */
+      .result-count { font-size: 15px; font-weight: 600; color: #1a3a5c; margin: 10px 0 6px; }
+
+      /* Facets */
+      .facet-panel { font-size: 13px; color: #333; }
+      .facet-panel h6 {
+        font-weight: 700; font-size: 11px; text-transform: uppercase;
+        color: #777; margin: 14px 0 4px; letter-spacing: .05em;
+      }
+      .facet-row {
+        display: flex; justify-content: space-between;
+        padding: 2px 0; border-bottom: 1px dotted #eee;
+      }
+      .facet-count { color: #aaa; font-size: 11px; min-width: 24px; text-align: right; }
+
+      /* Advanced filters toggle */
+      details > summary {
+        cursor: pointer; color: #2980b9; font-size: 13px;
+        user-select: none; padding: 6px 0; list-style: none;
+      }
+      details > summary::-webkit-details-marker { display: none; }
+      details > summary::before { content: "\\25B6  "; font-size: 10px; }
+      details[open] > summary::before { content: "\\25BC  "; font-size: 10px; }
+      .adv-section label { font-size: 12px; color: #555; margin-bottom: 2px; }
+      .adv-section .form-group { margin-bottom: 5px; }
+      .adv-section .form-control { height: 28px; font-size: 12px; padding: 2px 6px; }
+      .adv-section select.form-control { height: 28px; }
+      .adv-group-label {
+        font-size: 10px; font-weight: 700; text-transform: uppercase;
+        color: #aaa; letter-spacing: .06em; margin: 10px 0 4px; display: block;
+      }
+
+      /* Dataset detail panel */
+      .dataset-detail { margin-top: 18px; border-top: 2px solid #e0e8f0; padding-top: 10px; }
     ')),
-    # DataTables Buttons extension (column visibility)
     tags$link(rel = 'stylesheet',
-              href = 'https://cdn.datatables.net/buttons/2.4.1/css/buttons.dataTables.min.css'),
+      href = 'https://cdn.datatables.net/buttons/2.4.1/css/buttons.dataTables.min.css'),
     tags$script(src = 'https://cdn.datatables.net/buttons/2.4.1/js/dataTables.buttons.min.js'),
-    tags$script(src = 'https://cdn.datatables.net/buttons/2.4.1/js/buttons.colVis.min.js')
+    tags$script(src = 'https://cdn.datatables.net/buttons/2.4.1/js/buttons.colVis.min.js'),
+    tags$script(HTML("
+      function fillSearch(txt) {
+        var el = document.getElementById('search');
+        if (!el) return;
+        el.value = txt;
+        Shiny.setInputValue('search', txt);
+        setTimeout(function() {
+          var btn = document.getElementById('run_search');
+          if (btn) btn.click();
+        }, 80);
+      }
+    "))
   ),
+
+  # ── Header ──────────────────────────────────────────────────────────────────
   fluidRow(
-    column(4, align = 'left',
-      tags$span(
-  img(src = 'PhaMiG_logo.png',  height = '52px', alt = 'PhaMiG',
-      style = 'margin-right:8px;'),
-  img(src = 'QresDB_logo.png',  height = '52px', alt = 'Qres DB')
-)),
-    column(8,
-      h3('Search & Browse Datasets'))
+    column(5, align = 'left',
+      img(src = 'PhaMiG_logo.png', height = '52px', alt = 'PhaMiG',
+          style = 'margin-right:8px;'),
+      img(src = 'QresDB_logo.png', height = '52px', alt = 'Qres DB')
+    ),
+    column(7, align = 'right',
+      br(),
+      actionButton('init_db', icon('database'), ' Initialize / refresh DB',
+                   class = 'btn-default btn-sm',
+                   title = 'Scans data/raw_csv/ and data/metaData.csv and registers them in DuckDB.')
+    )
   ),
   hr(),
-  sidebarLayout(
-    sidebarPanel(width = 3,
-      actionButton('init_db', 'Initialize / refresh DB', width = '100%',
-                   class = 'btn-primary'),
-      helpText(tip('Scans data/raw_csv/ and data/metaData.csv and registers them in DuckDB. Safe to click multiple times — already-registered datasets are skipped. Required before searching if you added files manually.'),
-               ' First run: register all CSVs as Parquet.'),
-      tags$hr(),
-      tags$label(
-        'Search datasets',
-        tags$abbr(
-          title = paste(
-            'Supports both keywords and natural language (requires API key).',
-            'Examples:',
-            '"E. coli" — simple keyword;',
-            '"E. coli measured in 2023 by Bollenbach in LB medium with temperature as perturbation" — natural language;',
-            '"yeast 30 degrees synthetic medium" — mixed.',
-            'NL queries are routed through Claude when ANTHROPIC_API_KEY is set; keyword search is always available.'
-          ),
-          style = 'cursor:help; margin-left:5px; color:#888; font-size:12px; border-bottom:1px dotted #888;',
-          'ⓘ info'
-        )
-      ),
-      textInput('search', label = NULL,
-                placeholder = 'e.g. "E. coli 37°C LB" or "Bollenbach 2023 rifampicin"'),
-      uiOutput('search_mode_badge'),
-      tags$hr(),
-      h5('Filter by perturbation'),
-      selectInput('search_perturb_type',
-        req_label('Perturbation type',
-          'Filter datasets by experimental perturbation category. "all" shows everything. "temperature" finds growth curves at different temperatures. "chemical" finds antibiotic/drug experiments. "genetic" finds mutant strains.'),
-        choices = c('all' = 'all', 'chemical', 'genetic', 'temperature', 'none'),
-        selected = 'all'),
-      textInput('search_perturb',
-        opt_label('Perturbation name',
-          'Enter a drug name (e.g. rifampicin), a temperature value (e.g. 37), or a mutation (e.g. ΔtrpB). For temperature perturbations, a numeric value also matches plate.temperature_c within ±0.5°C.'),
-        placeholder = 'e.g. rifampicin  or  37  or  ΔtrpB'),
-      tags$hr(),
-      actionButton('run_search', 'Search', class = 'btn-primary', width = '100%'),
-      br(), br(),
-      uiOutput('download_search_ui'),
-      tags$hr(),
-      uiOutput('analyze_data_btn_ui'),
-      tags$hr(),
-      checkboxInput('log_y', 'Log-scale y axis', FALSE)
+
+  # ── Search hero ─────────────────────────────────────────────────────────────
+  tags$div(class = 'search-hero',
+    textInput('search', label = NULL,
+              placeholder = 'Search microbial growth datasets…',
+              width = '100%'),
+    tags$div(class = 'search-examples',
+      'Examples: ',
+      tags$a(onclick = "fillSearch('E. coli 37°C')", 'E. coli 37°C'), '  |  ',
+      tags$a(onclick = "fillSearch('Bacillus subtilis tetracycline')", 'Bacillus subtilis tetracycline'), '  |  ',
+      tags$a(onclick = "fillSearch('yeast ethanol stress')",            'yeast ethanol stress')
     ),
-    mainPanel(width = 9,
-      tabsetPanel(id = 'mainTabset',
-        tabPanel('Datasets',
-          br(),
-          DTOutput('dataset_table'),
-          br(),
-          uiOutput('selected_info'),
-          uiOutput('ncbi_link_box'),
-          uiOutput('doi_link_box')
-        ),
-        tabPanel('By publication',
-          br(),
+    fluidRow(column(6, offset = 3,
+      actionButton('run_search', icon('search'), ' Search',
+                   class = 'btn-primary btn-lg', width = '100%')
+    ))
+  ),
+
+  br(),
+
+  # ── Result count ─────────────────────────────────────────────────────────────
+  fluidRow(
+    column(8, uiOutput('search_result_bar')),
+    column(4, align = 'right', br(),
+      uiOutput('search_mode_badge'))
+  ),
+
+  # ── Two-column: facets + table ───────────────────────────────────────────────
+  fluidRow(
+
+    # ── Left: facets + advanced filters ───────────────────────────────────────
+    column(3,
+      uiOutput('search_facets'),
+      br(),
+      tags$details(
+        tags$summary('Advanced filters'),
+        tags$div(class = 'adv-section',
+          tags$span(class = 'adv-group-label', 'Biology'),
+          textInput('adv_species',      'Species',     placeholder = 'e.g. Escherichia coli', width = '100%'),
+          textInput('adv_strain',       'Strain',      placeholder = 'e.g. K-12',             width = '100%'),
+          textInput('adv_medium',       'Medium',      placeholder = 'e.g. LB, M9',           width = '100%'),
           fluidRow(
-            column(3,
-              wellPanel(
-                h5('Filter by publication'),
-                helpText('All datasets are shown by default. Add filters to narrow results.'),
-                textInput('pub_author',
-                  opt_label('Author name',
-                    'Partial match — enter surname or first author. Example: "Bollenbach" or "Smith, J."'),
-                  placeholder = 'e.g. Bollenbach, Mustonen'),
-                fluidRow(
-                  column(6, numericInput('pub_year_min',
-                    opt_label('From year', 'Earliest publication year. Leave blank for no lower limit.'),
-                    value = NULL, min = 1950, max = 2035, step = 1)),
-                  column(6, numericInput('pub_year_max',
-                    opt_label('To year', 'Latest publication year. Leave blank for no upper limit.'),
-                    value = NULL, min = 1950, max = 2035, step = 1))
-                ),
-                textInput('pub_doi',
-                  opt_label('DOI or URL fragment',
-                    'Partial match on DOI or source URL. Example: "10.1038" finds all Nature papers. "plos" finds PLOS ONE papers.'),
-                  placeholder = 'e.g. 10.1038/... or plos or biorxiv'),
-                textInput('pub_device',
-                  opt_label('Plate reader / device',
-                    'Partial match on instrument name. Examples: "Biotek", "Synergy H1", "Tecan", "Infinite".'),
-                  placeholder = 'e.g. Biotek, Tecan, Synergy'),
-                actionButton('run_pub_search', 'Apply filters', width = '100%',
-                             class = 'btn-primary'),
-                br(),
-                actionButton('clear_pub_search', 'Show all', width = '100%',
-                             class = 'btn-default')
-              )
-            ),
-            column(9,
-              DTOutput('pub_search_table'),
+            column(6, numericInput('adv_temp_min', 'Temp min °C', value = NA, step = 1)),
+            column(6, numericInput('adv_temp_max', 'Temp max °C', value = NA, step = 1))
+          ),
+          selectInput('adv_perturb_type', 'Perturbation type',
+            choices = c('(all)' = '', 'chemical', 'genetic', 'temperature', 'none'),
+            width = '100%'),
+          textInput('adv_perturb', 'Perturbation', placeholder = 'e.g. rifampicin', width = '100%'),
+          tags$hr(style = 'margin:4px 0;'),
+          tags$span(class = 'adv-group-label', 'Experimental'),
+          textInput('adv_plate_reader', 'Plate reader', placeholder = 'e.g. Biotek', width = '100%'),
+          tags$hr(style = 'margin:4px 0;'),
+          tags$span(class = 'adv-group-label', 'Publication'),
+          textInput('adv_author',   'Author',   placeholder = 'e.g. Bollenbach',   width = '100%'),
+          fluidRow(
+            column(6, numericInput('adv_year_min', 'From year', value = NA, min = 1950, max = 2035, step = 1)),
+            column(6, numericInput('adv_year_max', 'To year',   value = NA, min = 1950, max = 2035, step = 1))
+          ),
+          textInput('adv_doi', 'DOI', placeholder = 'e.g. 10.1038/…', width = '100%'),
+          br(),
+          actionButton('adv_clear', 'Clear all filters', class = 'btn-default btn-xs btn-block')
+        )
+      )
+    ),
+
+    # ── Right: table + actions + detail panel ──────────────────────────────────
+    column(9,
+      DTOutput('dataset_table'),
+      br(),
+      fluidRow(
+        column(6, uiOutput('analyze_data_btn_ui')),
+        column(6, align = 'right', uiOutput('download_search_ui'))
+      ),
+      # Per-dataset detail (shown when a row is selected)
+      conditionalPanel('output.has_selected_dataset',
+        tags$div(class = 'dataset-detail',
+          tabsetPanel(id = 'datasetDetailTabs',
+            tabPanel('Raw curves',
               br(),
-              uiOutput('pub_doi_links')
+              checkboxInput('log_y', 'Log-scale y axis', FALSE),
+              plotOutput('growth_plot', height = '420px'),
+              br(),
+              verbatimTextOutput('plate_qc_text')
+            ),
+            tabPanel('Links',
+              br(),
+              uiOutput('selected_info'),
+              br(),
+              uiOutput('ncbi_link_box'),
+              uiOutput('doi_link_box')
+            ),
+            tabPanel('Metrics',
+              br(),
+              DTOutput('metrics_table')
+            ),
+            tabPanel('QC',
+              br(),
+              plotOutput('qc_cv_plot',      height = '260px'),
+              br(),
+              plotOutput('qc_heatmap_plot', height = '260px')
             )
           )
-        ),
-        tabPanel('Raw curves',
-          br(),
-          plotOutput('growth_plot', height = '460px'),
-          br(),
-          verbatimTextOutput('plate_qc_text')
-        ),
-        tabPanel('Metrics',
-          br(),
-          DTOutput('metrics_table')
-        ),
-        tabPanel('QC',
-          br(),
-          plotOutput('qc_cv_plot',      height = '300px'),
-          br(),
-          plotOutput('qc_heatmap_plot', height = '300px')
         )
       )
     )
   ),
+
   bottom_nav
 )
 
@@ -1347,6 +1403,43 @@ server <- function(input, output, session) {
   analyse_mode_rv      <- reactiveVal(NULL)           # 'A', 'B', or 'C'
   mode_a_reset         <- reactiveVal(0L)             # increment forces Mode A re-render
 
+  # ── Advanced-filter reactive: narrows dataset_results() without a DB round-trip ──
+  display_results <- reactive({
+    df <- dataset_results()
+    if (nrow(df) == 0) return(df)
+
+    .txt <- function(df, col, val) {
+      v <- trimws(val %||% '')
+      if (!nzchar(v) || !col %in% names(df)) return(df)
+      df[grepl(v, as.character(df[[col]]), ignore.case = TRUE, fixed = FALSE), ]
+    }
+
+    df <- .txt(df, 'species',           input$adv_species)
+    df <- .txt(df, 'strain',            input$adv_strain)
+    df <- .txt(df, 'medium_type',       input$adv_medium)
+    df <- .txt(df, 'perturbation_type', input$adv_perturb_type)
+    df <- .txt(df, 'perturbation',      input$adv_perturb)
+    df <- .txt(df, 'plate_reader',      input$adv_plate_reader)
+    df <- .txt(df, 'authors',           input$adv_author)
+    df <- .txt(df, 'doi',               input$adv_doi)
+
+    t_lo <- suppressWarnings(as.numeric(input$adv_temp_min))
+    t_hi <- suppressWarnings(as.numeric(input$adv_temp_max))
+    if (!is.na(t_lo) && 'temperature_c' %in% names(df))
+      df <- df[!is.na(df$temperature_c) & df$temperature_c >= t_lo, ]
+    if (!is.na(t_hi) && 'temperature_c' %in% names(df))
+      df <- df[!is.na(df$temperature_c) & df$temperature_c <= t_hi, ]
+
+    y_lo <- suppressWarnings(as.integer(input$adv_year_min))
+    y_hi <- suppressWarnings(as.integer(input$adv_year_max))
+    if (!is.na(y_lo) && 'year' %in% names(df))
+      df <- df[!is.na(df$year) & df$year >= y_lo, ]
+    if (!is.na(y_hi) && 'year' %in% names(df))
+      df <- df[!is.na(df$year) & df$year <= y_hi, ]
+
+    df
+  })
+
   # ── Auto-load on startup — populate filter dropdowns and search results ──────
   session$onFlushed(function() {
     rows <- tryCatch({
@@ -1428,6 +1521,68 @@ server <- function(input, output, session) {
       'ollama'    = tags$small(style = 'color:#5cb85c;', '● NL: local Ollama'),
       tags$small(style = 'color:#888;', '● NL: rule-based (always on)')
     )
+  })
+
+  # Result count bar
+  output$search_result_bar <- renderUI({
+    n_all <- nrow(dataset_results())
+    n_dis <- nrow(display_results())
+    if (n_all == 0)
+      return(tags$p(class = 'result-count', style = 'color:#999;',
+                    'No datasets found. Click "Initialize / refresh DB" above.'))
+    lbl <- if (n_dis == n_all)
+      sprintf('%d dataset%s found', n_all, if (n_all == 1) '' else 's')
+    else
+      sprintf('%d of %d dataset%s (filters active)',
+              n_dis, n_all, if (n_all == 1) '' else 's')
+    tags$p(class = 'result-count', lbl)
+  })
+
+  # Facets panel — counts from the currently displayed (filtered) results
+  output$search_facets <- renderUI({
+    df <- display_results()
+    if (nrow(df) == 0) return(NULL)
+
+    .block <- function(title, vals) {
+      vals <- as.character(vals)
+      vals <- vals[!is.na(vals) & nzchar(vals)]
+      if (length(vals) == 0) return(NULL)
+      counts <- sort(table(vals), decreasing = TRUE)
+      rows <- lapply(seq_along(counts), function(i)
+        tags$div(class = 'facet-row',
+          tags$span(names(counts)[i]),
+          tags$span(class = 'facet-count', as.integer(counts[i]))))
+      tagList(tags$h6(title), rows, tags$hr(style = 'margin:5px 0;'))
+    }
+
+    short_auth <- trimws(sub(',.*', '', as.character(df$authors %||% '')))
+
+    tags$div(class = 'facet-panel',
+      .block('Species',     df$species),
+      .block('Temperature', paste0(df$temperature_c, ' °C')),
+      .block('Medium',      df$medium_type),
+      .block('Authors',     short_auth)
+    )
+  })
+
+  # Controls conditional detail panel visibility
+  output$has_selected_dataset <- reactive({ !is.null(selected_dataset()) })
+  outputOptions(output, 'has_selected_dataset', suspendWhenHidden = FALSE)
+
+  # Clear all advanced filter fields
+  observeEvent(input$adv_clear, {
+    updateTextInput(session,    'adv_species',      value = '')
+    updateTextInput(session,    'adv_strain',       value = '')
+    updateTextInput(session,    'adv_medium',       value = '')
+    updateNumericInput(session, 'adv_temp_min',     value = NA)
+    updateNumericInput(session, 'adv_temp_max',     value = NA)
+    updateSelectInput(session,  'adv_perturb_type', selected = '')
+    updateTextInput(session,    'adv_perturb',      value = '')
+    updateTextInput(session,    'adv_plate_reader', value = '')
+    updateTextInput(session,    'adv_author',       value = '')
+    updateNumericInput(session, 'adv_year_min',     value = NA)
+    updateNumericInput(session, 'adv_year_max',     value = NA)
+    updateTextInput(session,    'adv_doi',          value = '')
   })
 
   observeEvent(input$run_search, {
@@ -1519,7 +1674,7 @@ server <- function(input, output, session) {
   }, ignoreInit = TRUE)
 
   output$dataset_table <- renderDT(server = TRUE, {
-    df <- dataset_results()
+    df <- display_results()
     if (nrow(df) == 0) return(datatable(data.frame(message = 'No datasets found. Click "Initialize / refresh DB" first.')))
 
     # Truncate long fields for display; full value still in download
@@ -1547,7 +1702,7 @@ server <- function(input, output, session) {
     hidden_idx <- which(names(display) %in% c('dataset_id', 'raw_file', 'plate_reader', 'doi')) - 1L
 
     datatable(display,
-              selection  = 'single',
+              selection  = 'multiple',
               extensions = 'Buttons',
               options    = list(
                 pageLength  = 12,
@@ -1569,22 +1724,22 @@ server <- function(input, output, session) {
               rownames = FALSE)
   })
 
-  # Download current search results as CSV
+  # Download current (filtered) search results as CSV
   output$download_search_ui <- renderUI({
-    if (nrow(dataset_results()) > 0)
+    if (nrow(display_results()) > 0)
       downloadButton('download_search_csv', 'Download results (CSV)', class = 'btn-default')
   })
 
   output$download_search_csv <- downloadHandler(
     filename = function() paste0('phamig_search_', Sys.Date(), '.csv'),
-    content  = function(file) write.csv(dataset_results(), file, row.names = FALSE)
+    content  = function(file) write.csv(display_results(), file, row.names = FALSE)
   )
 
   observeEvent(input$dataset_table_rows_selected, {
-    df  <- dataset_results()
+    df  <- display_results()
     row <- input$dataset_table_rows_selected
-    if (length(row) == 1 && nrow(df) >= row)
-      selected_dataset(df$dataset_id[row])
+    if (length(row) >= 1 && nrow(df) >= row[1])
+      selected_dataset(df$dataset_id[row[1]])
   })
 
   output$selected_info <- renderUI({
@@ -2052,7 +2207,7 @@ server <- function(input, output, session) {
 
   observeEvent(input$go_to_analyze, {
     sel  <- input$dataset_table_rows_selected
-    rows <- dataset_results()
+    rows <- display_results()
     if (length(sel) == 0 || nrow(rows) == 0) return()
     analyze_selected_ids(rows$dataset_id[sel])
     analyse_mode_rv('B')
