@@ -3678,7 +3678,7 @@ server <- function(input, output, session) {
       is_blank           = 'Blank',
       is_control         = 'Control'
     )
-    col_names <- vapply(names(plate), function(n) col_labels[[n]] %||% n, character(1))
+    col_names <- unname(vapply(names(plate), function(n) col_labels[[n]] %||% n, character(1)))
 
     datatable(plate,
               colnames  = col_names,
