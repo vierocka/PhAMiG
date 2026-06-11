@@ -55,33 +55,79 @@ opt_label <- function(label, tooltip = NULL) {
   out
 }
 
-# Parse a well list with comma separation and colon-range notation.
-# "A1, H12, A12:E12"  →  c("A1","H12","A12","B12","C12","D12","E12")
-# A12:E12 = same column (12), rows A–E.   A1:A6 = same row (A), columns 1–6.
-.parse_wells <- function(x) {
-  if (!nzchar(trimws(x %||% ''))) return(character(0))
-  parts <- parts <- trimws(strsplit(x, ',')[[1]])
-  parts <- parts[nzchar(parts)]
-  out <- character(0)
-  for (p in parts) {
-    if (grepl(':', p, fixed = TRUE)) {
-      ends <- toupper(trimws(strsplit(p, ':')[[1]]))
-      if (length(ends) == 2) {
-        row1 <- gsub('[0-9]+', '', ends[1]); col1 <- suppressWarnings(as.integer(gsub('[A-Z]+', '', ends[1])))
-        row2 <- gsub('[0-9]+', '', ends[2]); col2 <- suppressWarnings(as.integer(gsub('[A-Z]+', '', ends[2])))
-        if (!is.na(col1) && !is.na(col2) && nzchar(row1) && nzchar(row2)) {
-          if (col1 == col2) {
-            i1 <- match(row1, LETTERS); i2 <- match(row2, LETTERS)
-            if (!is.na(i1) && !is.na(i2)) out <- c(out, paste0(LETTERS[i1:i2], col1))
-          } else if (row1 == row2) {
-            out <- c(out, paste0(row1, col1:col2))
-          }
-        }
-      }
-    } else {
-      out <- c(out, toupper(p))
-    }
+# Expand one well expression token. Handles:
+#   A1          → A1
+#   A1:H1       → A1,B1,C1,D1,E1,F1,G1,H1  (same column, row range)
+#   A1:A12      → A1,A2,…,A12               (same row, col range)
+#   A1:12       → A1,A2,…,A12               (same row, just col end)
+#   A:12        → A1,A2,…,A12               (row only + col end)
+#   E12:H12     → E12,F12,G12,H12           (same col number, row range)
+#   c(A1,B1)    → A1,B1                     (R-vector literal)
+#   Plate prefix Px: or Plate x: stripped silently (per-plate not yet supported)
+.expand_well_token <- function(p) {
+  p <- trimws(toupper(p))
+  if (!nzchar(p)) return(character(0))
+  # Strip plate prefix:  P1:  /  PLATE1:  /  P 2:
+  p <- sub('^(?:PLATE)?\\s*P?\\d+\\s*:', '', p, perl = TRUE, ignore.case = TRUE)
+  p <- trimws(p)
+  if (!nzchar(p)) return(character(0))
+  # c(…) notation
+  if (grepl('^C\\s*\\(', p)) {
+    inner <- sub('^C\\s*\\((.*)\\)\\s*$', '\\1', p, perl = TRUE)
+    return(toupper(trimws(strsplit(inner, '[,;]')[[1]])))
   }
+  if (!grepl(':', p, fixed = TRUE)) {
+    if (grepl('^[A-Z]+[0-9]+$', p)) return(p)
+    return(character(0))
+  }
+  parts2 <- strsplit(p, ':', fixed = TRUE)[[1]]
+  if (length(parts2) != 2) return(character(0))
+  w1 <- trimws(parts2[1]); w2 <- trimws(parts2[2])
+  row1 <- regmatches(w1, regexpr('^[A-Z]+', w1))
+  col1 <- suppressWarnings(as.integer(regmatches(w1, regexpr('[0-9]+$', w1))))
+  row2 <- regmatches(w2, regexpr('^[A-Z]+', w2))
+  col2 <- suppressWarnings(as.integer(regmatches(w2, regexpr('[0-9]+$', w2))))
+  hr1 <- length(row1) > 0 && nzchar(row1); hc1 <- length(col1) > 0 && !is.na(col1)
+  hr2 <- length(row2) > 0 && nzchar(row2); hc2 <- length(col2) > 0 && !is.na(col2)
+  # Same col number, different rows: A1:H1 or E12:H12
+  if (hr1 && hc1 && hr2 && hc2 && col1 == col2 && row1 != row2) {
+    i1 <- match(row1, LETTERS); i2 <- match(row2, LETTERS)
+    if (!is.na(i1) && !is.na(i2)) return(paste0(LETTERS[seq(min(i1,i2),max(i1,i2))], col1))
+  }
+  # Same row, different cols: A1:A12 or A1:B1 with same row
+  if (hr1 && hc1 && hr2 && hc2 && row1 == row2) {
+    return(paste0(row1, seq(min(col1,col2), max(col1,col2))))
+  }
+  # A1:12 — same row, col end only
+  if (hr1 && hc1 && !hr2 && hc2) {
+    return(paste0(row1, seq(min(col1,col2), max(col1,col2))))
+  }
+  # A:12 — row only + col end
+  if (hr1 && !hc1 && !hr2 && hc2) {
+    return(paste0(row1, seq(1L, col2)))
+  }
+  character(0)
+}
+
+# Parse a free-form well list into a character vector of normalised well names.
+# Accepts comma/semicolon-separated tokens, colon-range notation, R c() literals,
+# and optional plate prefixes (P1:, Plate2:) which are stripped (applies to all plates).
+# If `available` is supplied, only wells present in it are returned.
+.parse_wells <- function(x, available = NULL) {
+  if (!nzchar(trimws(x %||% ''))) return(character(0))
+  x <- gsub('[;\n\r]', ',', x)
+  x <- gsub('\\s*,\\s*', ',', trimws(x))
+  # Protect commas inside c(…) literals so they aren't used as token separators.
+  # Replace each interior comma one at a time until none remain inside any c(…).
+  HOLD <- '\x01'
+  while (grepl('[Cc]\\([^)]*,[^)]*\\)', x))
+    x <- sub('([Cc]\\([^)]*),([^)]*\\))', paste0('\\1', HOLD, '\\2'), x)
+  toks <- trimws(strsplit(x, ',')[[1]])
+  toks <- toks[nzchar(toks)]
+  toks <- gsub(HOLD, ',', toks, fixed = TRUE)
+  out  <- unique(toupper(unlist(lapply(toks, .expand_well_token))))
+  out  <- out[grepl('^[A-Z]+[0-9]+$', out)]
+  if (!is.null(available)) out <- intersect(out, toupper(available))
   out
 }
 
@@ -112,6 +158,20 @@ opt_label <- function(label, tooltip = NULL) {
     if (np == 4L) return(parts[1]*24 + parts[2] + parts[3]/60 + parts[4]/3600)   # dd:hh:mm:ss
     NA_real_
   }, numeric(1), USE.NAMES = FALSE)
+}
+
+# Classify well content labels to blank / control / sample.
+# Returns 'blank', 'control', or 'sample'.
+# Covers common plate-reader auto-generated labels.
+.classify_well_label <- function(labels) {
+  lbl <- tolower(trimws(as.character(labels)))
+  blank_pat   <- 'only.medium|^medium$|^blank$|blanks?$|only.med$|^lb$|^lb.only$|no.bacteria|no.?inocul'
+  control_pat <- 'no.stressor|no.drug|only.inocul|^control$|^ctrl$|pos.?control|neg.?control|wt.?only'
+  dplyr::case_when(
+    grepl(blank_pat,   lbl, perl = TRUE) ~ 'blank',
+    grepl(control_pat, lbl, perl = TRUE) ~ 'control',
+    TRUE ~ 'sample'
+  )
 }
 
 qres_clean_undefined <- function(x) {

@@ -2279,8 +2279,60 @@ server <- function(input, output, session) {
     )
   }
 
+  # ── Well-input help reference panel ─────────────────────────────────────
+  .ui_well_help <- function() {
+    tags$details(style = 'margin-bottom:6px;',
+      tags$summary(style = 'cursor:pointer; font-size:12px; color:#2980b9;',
+        icon('circle-question'), ' Well selection syntax'),
+      tags$div(style = 'background:#f8f9fa; border:1px solid #dee2e6; border-radius:4px;
+                        padding:8px 12px; margin-top:4px; font-size:12px;',
+        tags$div(style = 'display:grid; grid-template-columns:1fr 1fr; gap:0 16px;',
+          # Left column
+          tags$div(
+            tags$p(style='margin:2px 0; font-weight:600;', 'Range notation'),
+            tags$table(style='border-collapse:collapse; width:100%;',
+              tags$tr(tags$td(tags$code('A1:H1'),   style='padding:1px 6px 1px 0;'),
+                      tags$td('A1, B1, C1, D1, E1, F1, G1, H1  (same column)')),
+              tags$tr(tags$td(tags$code('A1:A12'),  style='padding:1px 6px 1px 0;'),
+                      tags$td('A1, A2, …, A12  (same row)')),
+              tags$tr(tags$td(tags$code('A1:12'),   style='padding:1px 6px 1px 0;'),
+                      tags$td('A1, A2, …, A12  (same row, shorthand)')),
+              tags$tr(tags$td(tags$code('E12:H12'), style='padding:1px 6px 1px 0;'),
+                      tags$td('E12, F12, G12, H12  (same col number)')),
+              tags$tr(tags$td(tags$code('A1,B1,C1'),style='padding:1px 6px 1px 0;'),
+                      tags$td('Comma-separated list'))
+            ),
+            tags$p(style='margin:6px 0 2px; font-weight:600;', 'Multi-plate prefix (stripped)'),
+            tags$table(style='border-collapse:collapse;',
+              tags$tr(tags$td(tags$code('P1:A1:H1'),     style='padding:1px 6px 1px 0;'),
+                      tags$td('Wells on plate 1 (applies to all plates)')),
+              tags$tr(tags$td(tags$code('P2:c(A1,B1)'),  style='padding:1px 6px 1px 0;'),
+                      tags$td('R-vector on plate 2'))
+            )
+          ),
+          # Right column
+          tags$div(
+            tags$p(style='margin:2px 0; font-weight:600;', 'Auto-detected blank labels'),
+            tags$ul(style='margin:2px 0 6px; padding-left:16px;',
+              tags$li(tags$code('only medium'), ', ', tags$code('medium'),
+                      ', ', tags$code('no bacteria'), ' → ', tags$b('blank')),
+              tags$li(tags$code('no stressor'), ', ', tags$code('no drug'),
+                      ', ', tags$code('only inoculum'), ' → ', tags$b('control'))
+            ),
+            tags$p(style='margin:6px 0 2px; font-weight:600;', 'Replicate colours'),
+            tags$p(style='margin:2px 0;',
+              'Click-mode ', tags$b('Replicate'), ' on the plate grid, pick a group ID,',
+              ' then click wells. Each group gets a distinct colour in the growth curves plot.',
+              ' Legend shows e.g. ', tags$code('R1 (A1, B1, C1, D1)'), '.')
+          )
+        )
+      )
+    )
+  }
+
   .ui_upload_section <- function() {
     tagList(
+      .ui_well_help(),
       fluidRow(
         column(8,
           tags$div(style = 'position:relative;',
@@ -2331,34 +2383,65 @@ server <- function(input, output, session) {
               uiOutput('comp_plate_map'),
               fluidRow(
                 column(6,
-                  selectizeInput('comp_upload_blanks', 'Blank wells',
+                  tags$label('Blank wells', class = 'control-label'),
+                  tags$div(style = 'display:flex; gap:4px; margin-bottom:3px;',
+                    tags$input(id = 'comp_blank_range_txt', type = 'text',
+                      class = 'form-control input-sm',
+                      placeholder = 'e.g. E12:H12 or A1,B1',
+                      style = 'height:28px; font-size:12px;'),
+                    tags$button(id = 'comp_blank_range_btn', type = 'button',
+                      class = 'btn btn-sm btn-default', style = 'height:28px; white-space:nowrap;',
+                      icon('plus'), ' Add')
+                  ),
+                  uiOutput('comp_blank_range_status'),
+                  selectizeInput('comp_upload_blanks', NULL,
                                  choices = NULL, multiple = TRUE,
                                  options = list(placeholder = 'none selected'))
                 ),
                 column(6,
-                  selectizeInput('comp_upload_controls', 'Control wells (shown in black)',
+                  tags$label('Control wells', class = 'control-label'),
+                  tags$div(style = 'display:flex; gap:4px; margin-bottom:3px;',
+                    tags$input(id = 'comp_ctrl_range_txt', type = 'text',
+                      class = 'form-control input-sm',
+                      placeholder = 'e.g. A12:H12 or P1:A1:4',
+                      style = 'height:28px; font-size:12px;'),
+                    tags$button(id = 'comp_ctrl_range_btn', type = 'button',
+                      class = 'btn btn-sm btn-default', style = 'height:28px; white-space:nowrap;',
+                      icon('plus'), ' Add')
+                  ),
+                  uiOutput('comp_ctrl_range_status'),
+                  selectizeInput('comp_upload_controls', NULL,
                                  choices = NULL, multiple = TRUE,
                                  options = list(placeholder = 'none selected'))
                 )
-              )
+              ),
+              # JS: Enter key in range text boxes triggers the Add button;
+              # Add buttons register their value with Shiny.
+              tags$script(HTML("
+                $(document).on('keyup', '#comp_blank_range_txt,#comp_ctrl_range_txt', function(e) {
+                  if (e.keyCode === 13) {
+                    var btn = this.id === 'comp_blank_range_txt'
+                              ? 'comp_blank_range_btn' : 'comp_ctrl_range_btn';
+                    Shiny.setInputValue(btn, Math.random(), {priority:'event'});
+                    Shiny.setInputValue(this.id + '_val', this.value, {priority:'event'});
+                    this.value = '';
+                  }
+                });
+                $(document).on('click', '#comp_blank_range_btn,#comp_ctrl_range_btn', function() {
+                  var txt_id = this.id === 'comp_blank_range_btn'
+                               ? 'comp_blank_range_txt' : 'comp_ctrl_range_txt';
+                  var el = document.getElementById(txt_id);
+                  Shiny.setInputValue(this.id + '_val', el ? el.value : '', {priority:'event'});
+                  Shiny.setInputValue(this.id, Math.random(), {priority:'event'});
+                  if (el) el.value = '';
+                });
+              "))
             ),
-            # Multi-plate Excel: show compact blank/control pickers without the plate grid
+            # Multi-plate Excel: info banner (selectizes are shared with the single-plate block above)
             conditionalPanel('output.comp_is_multiplate === true && output.comp_has_well_meta !== true',
               tags$div(class = 'alert alert-info', style = 'font-size:12px; padding:6px 10px; margin-bottom:6px;',
                 icon('layer-group'),
                 uiOutput('comp_multiplate_info')
-              ),
-              fluidRow(
-                column(6,
-                  selectizeInput('comp_upload_blanks', 'Blank wells (all plates)',
-                                 choices = NULL, multiple = TRUE,
-                                 options = list(placeholder = 'none selected'))
-                ),
-                column(6,
-                  selectizeInput('comp_upload_controls', 'Control wells (all plates)',
-                                 choices = NULL, multiple = TRUE,
-                                 options = list(placeholder = 'none selected'))
-                )
               )
             ),
             conditionalPanel('output.comp_has_well_meta === true',
@@ -2735,6 +2818,16 @@ server <- function(input, output, session) {
 
   observeEvent(input$comp_upload_file, {
     req(input$comp_upload_file)
+    # Reset everything first so a re-upload always starts from scratch
+    comp_upload_rv(NULL)
+    comp_upload_valid(FALSE)
+    comp_upload_n_plates(1L)
+    comp_well_meta_rv(NULL)
+    comp_replicates_rv(list())
+    updateSelectizeInput(session, 'comp_upload_blanks',
+                         choices = character(0), selected = character(0))
+    updateSelectizeInput(session, 'comp_upload_controls',
+                         choices = character(0), selected = character(0))
     comp_upload_tried(TRUE)
     raw_path  <- input$comp_upload_file$datapath
     is_excel  <- grepl('\\.xlsx?$', input$comp_upload_file$name, ignore.case = TRUE)
@@ -2953,6 +3046,39 @@ server <- function(input, output, session) {
     comp_replicates_rv(reps)
   })
 
+  # ── Range-text Add buttons for blank / control well entry ────────────────
+  .apply_range_add <- function(txt_val, target_input) {
+    req(!is.null(comp_upload_rv()))
+    available <- unique(comp_upload_rv()$well)
+    new_wells <- .parse_wells(txt_val %||% '', available = available)
+    existing  <- input[[target_input]] %||% character(0)
+    merged    <- union(existing, new_wells)
+    updateSelectizeInput(session, target_input, selected = merged)
+    list(n_new = length(new_wells), n_bad = length(new_wells) == 0 && nzchar(trimws(txt_val %||% '')))
+  }
+
+  observeEvent(input$comp_blank_range_btn, {
+    res <- .apply_range_add(input$comp_blank_range_btn_val, 'comp_upload_blanks')
+    output$comp_blank_range_status <- renderUI(
+      if (res$n_bad)
+        tags$small(style='color:#e74c3c;', icon('times'), ' No matching wells found.')
+      else if (res$n_new > 0)
+        tags$small(style='color:#27ae60;', icon('check'),
+                   sprintf(' +%d well%s added.', res$n_new, if(res$n_new>1) 's' else ''))
+      else NULL)
+  }, ignoreNULL = TRUE, ignoreInit = TRUE)
+
+  observeEvent(input$comp_ctrl_range_btn, {
+    res <- .apply_range_add(input$comp_ctrl_range_btn_val, 'comp_upload_controls')
+    output$comp_ctrl_range_status <- renderUI(
+      if (res$n_bad)
+        tags$small(style='color:#e74c3c;', icon('times'), ' No matching wells found.')
+      else if (res$n_new > 0)
+        tags$small(style='color:#27ae60;', icon('check'),
+                   sprintf(' +%d well%s added.', res$n_new, if(res$n_new>1) 's' else ''))
+      else NULL)
+  }, ignoreNULL = TRUE, ignoreInit = TRUE)
+
   observeEvent(input$comp_well_meta_file, {
     req(input$comp_well_meta_file)
     path <- input$comp_well_meta_file$datapath
@@ -2966,9 +3092,12 @@ server <- function(input, output, session) {
     .norm <- function(x) sub('^([A-Za-z])0+', '\\1', trimws(toupper(x)))
     meta$well <- .norm(meta$well)
 
-    if ('type' %in% names(meta)) {
-      blanks   <- meta$well[tolower(meta$type) %in% c('blank', 'blanks')]
-      controls <- meta$well[tolower(meta$type) %in% c('control', 'controls')]
+    # Detect blanks/controls from explicit columns or from free-text strain/type labels
+    label_col <- intersect(names(meta), c('type', 'strain', 'condition', 'treatment', 'content'))[1]
+    if (!is.null(label_col) && !is.na(label_col)) {
+      cls      <- .classify_well_label(meta[[label_col]])
+      blanks   <- meta$well[cls == 'blank']
+      controls <- meta$well[cls == 'control']
     } else {
       blanks   <- if ('is_blank'   %in% names(meta)) meta$well[as.logical(meta$is_blank)   %in% TRUE] else character(0)
       controls <- if ('is_control' %in% names(meta)) meta$well[as.logical(meta$is_control) %in% TRUE] else character(0)
@@ -3207,14 +3336,18 @@ server <- function(input, output, session) {
             icon('info-circle'), ' No blank wells designated in these datasets.')
       ),
       fluidRow(column(2, checkboxInput('comp_log_y', 'Log y', FALSE))),
-      withSpinner(plotOutput('comp_curves', height = '420px'), type = 6, color = '#5b9bd5')
+      withSpinner(
+        plotOutput('comp_curves', height = '420px',
+                   hover = hoverOpts('comp_curves_hover', delay = 80,
+                                     delayType = 'debounce', nullOutside = TRUE)),
+        type = 6, color = '#5b9bd5'),
+      uiOutput('comp_curves_tooltip')
     )
   })
 
   output$comp_curves <- renderPlot({
     raw <- comp_all_raw()
     req(!is.null(raw) && nrow(raw) > 0)
-    # Apply display baseline
     bm  <- input$comp_curves_baseline %||% 'none'
     bids <- if (bm == 'blank_wells')
       tryCatch(qres_get_blank_wells(con, comp_active_ids()), error = function(e) character(0))
@@ -3222,14 +3355,34 @@ server <- function(input, output, session) {
     if (bm == 'blank_wells' && comp_has_upload())
       bids <- c(bids, input$comp_upload_blanks %||% character(0))
     raw <- .apply_baseline(raw, method = bm, blank_ids = bids)
-    # Control wells in black
     ctrl_well_ids <- raw$well_id[raw$well %in% (input$comp_upload_controls %||% character(0))]
-    colour_col <- if ('plot_label' %in% names(raw)) 'plot_label' else 'dataset_id'
+    colour_col    <- if ('plot_label' %in% names(raw)) 'plot_label' else 'dataset_id'
     qres_plot_growth(raw, log_y = input$comp_log_y %||% FALSE,
-                     colour_by = colour_col,
-                     control_wells = ctrl_well_ids)
+                     colour_by     = colour_col,
+                     control_wells = ctrl_well_ids,
+                     rep_groups    = comp_replicates_rv())
   }) |> bindCache(comp_all_raw(), input$comp_log_y, input$comp_curves_baseline,
-                  input$comp_upload_controls)
+                  input$comp_upload_controls,
+                  length(comp_replicates_rv()))
+
+  # Hover tooltip: show well ID of nearest curve
+  output$comp_curves_tooltip <- renderUI({
+    hov <- input$comp_curves_hover
+    if (is.null(hov)) return(NULL)
+    raw <- comp_all_raw()
+    if (is.null(raw) || nrow(raw) == 0) return(NULL)
+    near <- nearPoints(raw, hov, xvar = 'time_h', yvar = 'value',
+                       maxpoints = 1, threshold = 12)
+    if (nrow(near) == 0) return(NULL)
+    tags$div(
+      style = sprintf(
+        'position:absolute; left:%fpx; top:%fpx; background:rgba(40,40,40,.82);
+         color:#fff; padding:3px 7px; border-radius:4px; font-size:11px;
+         pointer-events:none; z-index:100; white-space:nowrap;',
+        hov$coords_css$x + 10, hov$coords_css$y - 20),
+      near$well_id[1]
+    )
+  })
 
   # ── Tool benchmarking tab UI ─────────────────────────────────────────────────
   output$comp_comparison_ui <- renderUI({

@@ -195,12 +195,15 @@ qres_read_logphase_well_meta <- function(path, dataset_id = '__upload__') {
     if (length(rep_col))
       df$replicate <- suppressWarnings(as.integer(as.numeric(as.character(df[[rep_col[[1]]]]))))
 
-    # is_blank: strain == "only medium" or similar blank indicators
-    if ('strain' %in% names(df))
-      df$is_blank <- grepl('only.medium|blank|control.?medium|no.?bac', df$strain,
-                           ignore.case = TRUE, perl = TRUE)
-    else
-      df$is_blank <- FALSE
+    # is_blank / is_control: classify via shared label pattern function
+    if ('strain' %in% names(df)) {
+      cls <- .classify_well_label(df$strain)
+      df$is_blank   <- cls == 'blank'
+      df$is_control <- cls == 'control'
+    } else {
+      df$is_blank   <- FALSE
+      df$is_control <- FALSE
+    }
 
     df$is_control <- FALSE
     df$plate_id   <- plate_id
