@@ -556,7 +556,7 @@ ui_search <- fluidPage(
     ),
     column(7, align = 'right',
       br(),
-      actionButton('init_db', icon('database'), ' Initialize / refresh DB',
+      actionButton('init_db', tagList(icon('database'), ' Initialize / refresh DB'),
                    class = 'btn-default btn-sm',
                    title = 'Scans data/raw_csv/ and data/metaData.csv and registers them in DuckDB.')
     )
@@ -583,7 +583,7 @@ ui_search <- fluidPage(
       tags$a(onclick = "fillSearch('yeast ethanol stress')",            'yeast ethanol stress')
     ),
     fluidRow(column(6, offset = 3,
-      actionButton('run_search', icon('search'), ' Search',
+      actionButton('run_search', tagList(icon('search'), ' Search'),
                    class = 'btn-primary btn-lg', width = '100%')
     ))
   ),
@@ -2245,7 +2245,7 @@ server <- function(input, output, session) {
       br(),
       uiOutput('comp_search_btn'),
       tags$div(style = 'margin-top:6px; text-align:right;',
-        actionLink('comp_clear_filters', icon('times'), ' Clear filters'))
+        actionLink('comp_clear_filters', tagList(icon('times'), ' Clear filters')))
     )
   }
 
@@ -2329,7 +2329,7 @@ server <- function(input, output, session) {
         ),
         br(),
         fluidRow(column(12,
-          actionButton('comp_clear_upload', icon('trash'), ' Clear data',
+          actionButton('comp_clear_upload', tagList(icon('trash'), ' Clear data'),
                        class = 'btn-sm btn-danger',
                        title = 'Remove uploaded data and reset the form'),
           tags$small(style = 'color:#888; margin-left:10px;',
@@ -2437,7 +2437,7 @@ server <- function(input, output, session) {
             tags$a(href = route_link('search'), style = 'font-size:12px; color:#2980b9;',
                    icon('arrow-left'), ' Change selection'),
             tags$span(style = 'margin: 0 8px; color:#ccc;', '|'),
-            actionLink('comp_upgrade_to_c', icon('upload'), ' + Add my own file')
+            actionLink('comp_upgrade_to_c', tagList(icon('upload'), ' + Add my own file'))
           )
         ),
         tags$details(style = 'margin-bottom:10px;',
