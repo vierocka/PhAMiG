@@ -3620,10 +3620,63 @@ server <- function(input, output, session) {
   output$plateMatrix <- renderDT({
     plate <- plateMatrix()
     if (nrow(plate) == 0) return(datatable(data.frame(message = 'Select plate format to start.')))
-    non_empty <- vapply(plate, function(col)
-      !all(is.na(col) | col == '' | isFALSE(col)), logical(1))
-    non_empty['well'] <- TRUE
-    datatable(plate[, non_empty, drop = FALSE],
+
+    # ── Smart column ordering and header logic ─────────────────────────────
+    # Preferred display order: well → replicate → stressor → concentration →
+    #   concentration_unit → genetic background → blank → control → rest
+    col_order <- c('well', 'replicate', 'perturbation_type', 'perturbation',
+                   'concentration', 'concentration_unit',
+                   'taxon_id', 'medium_state', 'is_blank', 'is_control')
+    present    <- intersect(col_order, names(plate))
+    extra      <- setdiff(names(plate), present)
+    plate      <- plate[, c(present, extra), drop = FALSE]
+
+    # Drop columns that are entirely empty / default
+    non_empty <- vapply(names(plate), function(cn) {
+      col <- plate[[cn]]
+      if (cn == 'well')     return(TRUE)
+      if (cn == 'replicate') return(!all(is.na(col) | col == 1L | col == '1'))
+      if (cn == 'is_blank' || cn == 'is_control') return(any(col == TRUE, na.rm = TRUE))
+      if (cn == 'medium_state') return(!all(is.na(col) | col == 'liquid'))
+      !all(is.na(col) | trimws(as.character(col)) %in% c('', 'NA', 'FALSE'))
+    }, logical(1))
+    plate <- plate[, non_empty, drop = FALSE]
+
+    # Smart stressor-column rename:
+    # If all non-blank perturbation values are the same stressor, rename the
+    # concentration column header to that stressor name and drop perturbation col.
+    conc_label <- 'Concentration'
+    drop_perturb <- FALSE
+    if ('perturbation' %in% names(plate) && 'concentration' %in% names(plate)) {
+      non_blank_perturb <- plate$perturbation[is.na(plate$is_blank) | plate$is_blank != TRUE]
+      non_blank_perturb <- non_blank_perturb[!is.na(non_blank_perturb) & nzchar(non_blank_perturb)]
+      uniq_p <- unique(non_blank_perturb)
+      if (length(uniq_p) == 1 && !grepl(';', uniq_p)) {
+        conc_label   <- uniq_p   # e.g. "rifampicin"
+        drop_perturb <- TRUE
+      }
+    }
+    if (drop_perturb) {
+      plate <- plate[, setdiff(names(plate), c('perturbation', 'perturbation_type')), drop = FALSE]
+    }
+
+    # Friendly column names
+    col_labels <- c(
+      well               = 'Well',
+      replicate          = 'Replicate',
+      perturbation_type  = 'Type',
+      perturbation       = 'Stressor / mutation',
+      concentration      = conc_label,
+      concentration_unit = 'Unit',
+      taxon_id           = 'Taxon ID',
+      medium_state       = 'Medium state',
+      is_blank           = 'Blank',
+      is_control         = 'Control'
+    )
+    col_names <- vapply(names(plate), function(n) col_labels[[n]] %||% n, character(1))
+
+    datatable(plate,
+              colnames  = col_names,
               selection = 'none',
               options   = list(pageLength = 10, dom = 'lt', scrollX = TRUE,
                                lengthMenu = list(c(10, -1), c('10', 'All'))),
