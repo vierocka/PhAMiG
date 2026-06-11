@@ -1,91 +1,132 @@
 # PhaMiG — PHenotypic Analysis of Microbial Growth
 
-A Shiny + DuckDB database for microbial growth curve storage, multi-tool analysis, and cross-study comparison.
-Covers bacteria and yeast. Built for antibiotic resistance research and benchmarking of growth curve analysis tools.
+A Shiny + DuckDB web application for storing, querying, and benchmarking microbial
+growth curve analyses. Covers bacteria and yeast. Built for antibiotic resistance
+research and honest cross-tool comparison of growth curve estimators.
 
-**Scientific value proposition:** Run gcplyr, growthrates, DGrowthR, KinBiont.jl, omniplate and a model-free
-estimator on the *same* raw data, with all results queryable by species / medium / temperature / perturbation.
+**Scientific value proposition:** Run model-free, gcplyr, growthrates, DGrowthR,
+KinBiont.jl, and omniplate on the *same* pre-processed raw data; query all results
+by species / medium / temperature / perturbation.
+
+See [ARCHITECTURE.md](ARCHITECTURE.md) for a map of how pages and code modules connect.
+
+---
+
+## Pages
+
+| Page | Route | What it does |
+|------|-------|--------------|
+| Home | `/` | Navigation grid (6 tiles) |
+| Search & Browse | `/search` | Filter datasets by species, medium, temperature, perturbation, author, DOI; keyword search; download CSV |
+| Analyse & Benchmark | `/analyse` | Growth curve plotting + multi-tool benchmarking. Three modes: upload own file (A), repository datasets (B), or both (C) |
+| Natural Language Query | `/ask` | Free-text queries (rule-based + Claude API fallback) → SQL → growth curves + benchmarking |
+| Submit Data | `/submit` | Upload raw time-series + metadata; pick release mode; receive one-time access key |
+| Manage My Data | `/submit` (tab) | Delete dataset by 3-factor auth (email + access key + passphrase); check release status |
+| Metadata Preparation | `/metadata_prep` | Plate template generator; field reference |
+| Plugins & Tools | `/plugins` | Plugin status, references, processing log |
+| Acknowledgements | `/acknowledgement` | Funding, tool authors, similar resources |
+
+---
+
+## Analyse & Benchmark — three modes
+
+| Mode | Data source | Stored in DB? |
+|------|-------------|---------------|
+| **A — My file** | CSV or Excel upload (single plate or multi-sheet) | No — in-session only |
+| **B — Repository** | Datasets selected from Search or pre-filtered | Yes — read from Parquet |
+| **C — Both** | Upload + repository datasets overlaid | Upload: no; repo: yes |
+
+All three modes share the same blank/control pipeline, baseline subtraction
+options (min-per-well, first-3 timepoints, blank-wells subtraction), and plugins.
+
+---
+
+## Blank / control detection
+
+Auto-detection uses **SD < 0.1** per well computed **per dataset** (not on combined
+data), so wells from different experiments are never cross-contaminated. The criterion
+catches flat medium-only wells regardless of their mean OD level.
+
+Blanks are removed from plots and excluded from fitting. Controls are kept in plots
+but coloured distinctly (black) and excluded from metric computation.
 
 ---
 
 ## Metadata structure
 
-Every dataset in PhaMiG requires two paired files linked by `dataset_id`:
+Every dataset requires a raw time-series file and a metadata record linked by `dataset_id`.
 
-| File | Content | Key column |
-|------|---------|------------|
-| `metaData.csv` | Dataset-level metadata (one row per raw CSV) | `dataset_id` |
-| Raw plate reader CSV | Time-series OD measurements | — |
-| Plate template CSV *(optional)* | Per-well condition breakdown | `well` |
+### Raw data file
 
-### metaData.csv — required columns ★
+Accepted formats:
 
-| Column | Type | Description | Example |
-|--------|------|-------------|---------|
-| `dataset_id` ★ | text | **Unique key** — links metadata to raw data and all derived results | `ecoli_LB_37C_2024_smith` |
-| `raw_file` ★ | text | Filename of the raw CSV (time + OD values) | `plate01_run3.csv` |
-| `species` ★ | text | Organism name | `Escherichia coli` |
-| `medium_type` ★ | text | Growth medium | `MOPS + 3 g/L glucose` |
-| `temperature_c` ★ | number | Measurement temperature in °C | `37` |
-| `perturbation_type` ★ | text | `chemical` \| `genetic` \| `temperature` \| `none` | `chemical` |
-
-### metaData.csv — optional columns
-
-| Column | Description | Example |
-|--------|-------------|---------|
-| `perturbation` | Perturbation agent or value | `rifampicin` / `37` / `ΔtrpB` |
-| `strain` | Strain designation | `K12 NCM3722` |
-| `taxon_id` | NCBI taxonomy ID | `562` |
-| `medium_state` | `liquid` or `solid` | `liquid` |
-| `concentration` | Perturbation amount (number) | `50` |
-| `concentration_unit` | Unit for concentration | `mg/L` |
-| `plate_format` | Number of wells | `96` |
-| `plate_reader` | Instrument name/model | `Biotek Synergy H1` |
-| `wavelength_nm` | Measurement wavelength | `600` |
-| `shake_freq_rpm` | Orbital shaking frequency | `150` |
-| `spectrophotometer` | Spectrophotometer model | `OD600` |
-| `time_unit` | `h` (hours) \| `min` \| `s` | `h` |
-| `authors` | Publication authors | `Smith, J.; Doe, A.` |
-| `year` | Publication year | `2024` |
-| `doi` | Digital object identifier | `10.1234/...` |
-| `notes` | Free-text notes | — |
-
-### Raw data CSV format
+| Format | Notes |
+|--------|-------|
+| CSV | Column 1 = time (hours); columns 2–N = OD values; headers = well names (A1…H12) |
+| Single-sheet Excel | Same layout; time column may be POSIXct HH:MM:SS (auto-converted) |
+| Multi-sheet Excel | One sheet per plate; sheets become Plate 1, Plate 2, … |
+| LogPhase600 Excel | Three sheets per plate (Raw Data / Results / Procedure); well metadata auto-loaded |
 
 ```
 time_h, A1,   A2,   A3,   ...
 0.0,    0.05, 0.05, 0.06,
 0.5,    0.06, 0.05, 0.07,
-...
 ```
 
-- Column 1: time in the unit specified by `time_unit` (default: hours)
-- Columns 2–N: OD values; header = well names (`A1`, `A2`, …, `H12`)
+### metaData.csv — required columns ★
 
-### Plate template CSV (from Metadata Preparation page)
+| Column | Type | Example |
+|--------|------|---------|
+| `dataset_id` ★ | text | `ecoli_LB_37C_2024_smith` |
+| `raw_file` ★ | text | `plate01_run3.csv` |
+| `species` ★ | text | `Escherichia coli` |
+| `medium_type` ★ | text | `MOPS + 3 g/L glucose` |
+| `temperature_c` ★ | number | `37` |
+| `perturbation_type` ★ | `chemical` \| `genetic` \| `temperature` \| `none` | `chemical` |
 
-One row per well. Columns match `well_metadata` table fields:
-`well, species, strain, medium_type, perturbation_type, perturbation, concentration, concentration_unit, is_blank, is_control`
+### metaData.csv — optional columns
 
-Generated automatically by the **Metadata Preparation** page in the app.
+| Column | Description | Example |
+|--------|-------------|---------|
+| `perturbation` | Agent or value | `rifampicin` / `37` / `ΔtrpB` |
+| `strain` | Strain designation | `K12 NCM3722` |
+| `taxon_id` | NCBI taxonomy ID | `562` |
+| `medium_state` | `liquid` or `solid` | `liquid` |
+| `concentration` | Perturbation amount | `50` |
+| `concentration_unit` | Unit | `mg/L` |
+| `plate_format` | Number of wells | `96` |
+| `plate_reader` | Instrument | `Biotek Synergy H1` |
+| `wavelength_nm` | Measurement wavelength | `600` |
+| `shake_freq_rpm` | Shaking frequency | `150` |
+| `authors` | Publication authors | `Smith, J.; Doe, A.` |
+| `year` | Publication year | `2024` |
+| `doi` | DOI | `10.1234/...` |
+| `notes` | Free text | — |
 
-### Unique key chain
+### Plate template CSV (per-well conditions)
+
+One row per well. Generated by the **Metadata Preparation** page.
 
 ```
-dataset_id (user-assigned, unique)
-  └── dataset table       (one row: publication info, raw_file, time_unit)
-  └── plate table         (one row: instrument, temperature_c, plate_reader…)
-  └── well_metadata       (N rows: per-well biology — species, medium, perturbation…)
-  └── raw_measurement_registry (one row: Parquet path, n_wells, n_rows)
-  └── processing_run      (one row per plugin execution)
-  └── derived_metric      (one row per metric per well per run)
+well, species, strain, medium_type, perturbation_type, perturbation,
+     concentration, concentration_unit, is_blank, is_control
+```
+
+### Key chain
+
+```
+dataset_id
+  ├── dataset            (publication info, raw_file path)
+  ├── plate              (instrument, temperature_c, plate_reader)
+  ├── well_metadata      (per-well biology: species, medium, is_blank, is_control)
+  ├── raw_measurement_registry  (Parquet path, n_wells, n_rows)
+  ├── processing_run     (one row per plugin execution)
+  └── derived_metric     (one row per metric × well × run)
 ```
 
 ---
 
-## Searchable fields
-
-All fields below are indexed in DuckDB and exposed in the Search UI:
+## Search fields
 
 | UI label | DB column | Table |
 |----------|-----------|-------|
@@ -100,36 +141,67 @@ All fields below are indexed in DuckDB and exposed in the Search UI:
 | DOI | `dataset.doi` | dataset |
 | Plate reader | `plate.plate_reader` | plate |
 
-**Temperature-as-perturbation search:** when `perturbation_type = temperature` and you enter a number in
-"Perturbation name", the search matches both `well_metadata.perturbation` and `plate.temperature_c ± 0.5°C`.
+Species filter shows strain count in the dropdown: *E. coli (3 strains)*.
+
+Temperature-as-perturbation: when `perturbation_type = temperature` and you enter a
+number, the search matches both `well_metadata.perturbation` and
+`plate.temperature_c ± 0.5°C`.
 
 ---
 
 ## Analysis plugins
 
-| Plugin | Language | Key metric | Status |
-|--------|----------|------------|--------|
-| model_free | R | doubling_time_h, mumax_percapita, AUC | ✅ Working |
-| gcplyr | R | mumax_percapita, lag_time_h | ✅ Working |
-| growthrates | R | mumax_percapita, lag_time_h | ✅ Working |
-| DGrowthR | R (GPR) | mumax_percapita, AUC | ✅ Installed |
-| KinBiont.jl | Julia | mumax_percapita, lag_time_h | ⚠️ Needs Julia 1.11 (CHOLMOD compat) |
-| omniplate | Python | mumax_abs_od_per_h, AUC | ✅ Wired via reticulate |
+| Plugin | Language | Key metrics | Status |
+|--------|----------|-------------|--------|
+| model_free | R | doubling_time_h, mumax_percapita, AUC, max_od, delta_od | ✅ |
+| gcplyr | R | mumax_percapita, lag_time_h, AUC | ✅ |
+| growthrates | R | mumax_percapita, lag_time_h | ✅ |
+| DGrowthR | R (GPR) | mumax_percapita, AUC | ✅ installed |
+| KinBiont.jl | Julia | mumax_percapita, lag_time_h | ⚠️ needs Julia 1.11 |
+| omniplate | Python | mumax_abs_od_per_h, AUC | ✅ via reticulate |
 
-**All plugins receive identically pre-processed data** (blank subtraction, optional smoothing)
-to make cross-tool comparisons honest.
+All plugins receive **identically pre-processed data** (blank subtraction, same
+baseline method) to make comparisons honest.
+
+Fitting runs asynchronously via `future_promise` (multisession, 2 workers) so the
+UI stays responsive during long computations.
 
 ---
 
-## Stack
+## Data access and embargo
 
-- **Shiny** + `shiny.router` (v0.3.x, cerulean theme) — user interface
-- **DuckDB** — metadata, registry, provenance, search, derived metrics
-- **Arrow / Parquet** — fast columnar storage for raw time-series data
-- **duckplyr** — DuckDB-accelerated dplyr operations
-- **reticulate** — Python bridge for omniplate (`conda env: omniplate_env`, Python 3.11)
-- **JuliaCall** — Julia bridge for KinBiont.jl
-- **httr2** — Anthropic Claude API for natural-language query fallback
+| Release mode | Behaviour |
+|-------------|-----------|
+| **Immediate** | Publicly searchable on registration |
+| **Set a release date** | Hidden until chosen date; auto-released at midnight |
+| **bioRxiv preprint** | Hidden until the preprint gains a journal DOI (monthly check) |
+
+Unreleased datasets are invisible in all search results, analysis tabs, and downloads.
+
+### Deletion key chain
+
+Every upload generates a **32-character access key** shown once. To delete:
+
+1. Email address (provided at upload, case-insensitive)
+2. 32-character access key (random, not recoverable — save it)
+3. Passphrase (≥ 8 characters, stored as SHA-256 hash only)
+
+All three must match. Deletion removes raw data, metadata, and all derived metrics.
+
+---
+
+## Tech stack
+
+| Layer | Technology |
+|-------|------------|
+| UI framework | R Shiny + shiny.router (URL-hash routing), shinythemes cerulean |
+| Database | DuckDB (metadata, registry, derived metrics, embargo) |
+| Raw storage | Apache Parquet via arrow (columnar, fast time-series reads) |
+| Async fitting | future + promises (multisession, 2 workers) |
+| LLM integration | Anthropic Claude API via httr2 (optional); rule-based NL fallback |
+| Python bridge | reticulate → omniplate (conda env `omniplate_env`, Python 3.11) |
+| Julia bridge | JuliaCall → KinBiont.jl |
+| Reactive caching | bindCache() on all expensive renders and computations |
 
 ---
 
@@ -137,15 +209,15 @@ to make cross-tool comparisons honest.
 
 ```r
 install.packages(c(
-  'shiny', 'shinythemes', 'shiny.router',
-  'DT', 'DBI', 'duckdb', 'duckplyr',
-  'ggplot2', 'data.table', 'readr', 'dplyr', 'tidyr',
-  'glue', 'jsonlite', 'arrow', 'httr2', 'reticulate'
+  'shiny', 'shinythemes', 'shiny.router', 'shinycssloaders',
+  'DT', 'DBI', 'duckdb', 'ggplot2', 'data.table', 'readr',
+  'dplyr', 'tidyr', 'glue', 'jsonlite', 'arrow', 'httr2',
+  'memoise', 'future', 'promises', 'reticulate', 'readxl'
 ))
 
 # Growth analysis plugins
 install.packages(c('gcplyr', 'growthrates'))
-# remotes::install_github('bio-datascience/DGrowthR')  # DGrowthR
+# remotes::install_github('bio-datascience/DGrowthR')
 
 # Python bridge (omniplate)
 # conda create -n omniplate_env python=3.11
@@ -154,59 +226,21 @@ install.packages(c('gcplyr', 'growthrates'))
 shiny::runApp()
 ```
 
-Set `ANTHROPIC_API_KEY` for natural-language search (optional — rule-based NL search works without it):
+Set in `~/.Renviron` (never in source code):
 
-```r
-Sys.setenv(ANTHROPIC_API_KEY = 'sk-ant-...')
 ```
-
----
-
-## Data access and embargo
-
-PhaMiG supports three release modes for uploaded datasets:
-
-| Mode | Behaviour |
-|------|-----------|
-| **Immediate** | Dataset is publicly searchable as soon as it is registered (use for published data) |
-| **Set a release date** | Dataset is hidden until the chosen date; auto-released at midnight |
-| **bioRxiv preprint** | Dataset is hidden until the bioRxiv preprint gains a journal DOI (monthly API check) |
-
-Unreleased datasets are **completely hidden** from all search results, analysis tabs, and downloads.
-
-### Deletion key chain
-
-Every upload generates a **32-character access key** (shown once). To delete a dataset, provide:
-
-1. Your **email address** (provided at upload, case-insensitive)
-2. The **32-character access key** (random, not recoverable — save it!)
-3. Your **passphrase** (≥8 characters, hashed with SHA-256 before storage)
-
-All three must match. Deletion removes raw data, metadata, and all analysis results permanently.
-
-Manage your datasets on the **Manage my data** tab of the Submit page.
-
----
-
-## App pages
-
-| Page | Route | Description |
-|------|-------|-------------|
-| Home | `/` | 6-pictogram navigation grid |
-| Metadata Preparation | `/metadata_prep` | Plate template generator with required/optional fields, field reference |
-| Search & Browse | `/search` | Keyword + NL + perturbation-type filtering; download results |
-| Analyse & Benchmark | `/analyse` | **Dataset comparison** (growth curves across datasets) + **Tool benchmarking** (gcplyr / growthrates / KinBiont side-by-side); box plots, scatter, curves |
-| Contact & NL Query | `/ask` | Free-text natural language queries (rule-based + Claude fallback) |
-| Submit Data | `/submit` | Upload raw CSV + metadata; choose release mode; view access key |
-| Manage my data | `/submit` (tab) | Delete dataset by 3-factor auth; check release status by email |
-| Plugins & Tools | `/plugins` | Plugin status, references, processing log |
-| Acknowledgements | `/acknowledgement` | Funding, tool authors, similar resources |
+ANTHROPIC_API_KEY=sk-ant-...       # natural-language query (optional)
+PHAMIG_ADMIN_EMAIL=...             # submission confirmation email sender
+PHAMIG_ADMIN_USER=...
+PHAMIG_ADMIN_PWD_HASH=...          # bcrypt hash
+KINBIONT_SYSIMAGE=path/to/image    # pre-compiled Julia sysimage (optional)
+```
 
 ---
 
 ## Current datasets
 
-19 *E. coli* K12 NCM3722 growth curves in MOPS + 3 g/L glucose, 27–45 °C (1°C steps).
+19 *E. coli* K12 NCM3722 growth curves in MOPS + 3 g/L glucose, 27–45 °C (1 °C steps).  
 Source: Katipoglu-Yazan et al. (2023). DOI: [10.57745/GCKG7W](https://doi.org/10.57745/GCKG7W)
 
-Yeast datasets (Ville Mustonen, Tobias Bollenbach, Roman Holic groups) — integration in progress.
+Yeast datasets (Mustonen, Bollenbach, Holic groups) — integration in progress.
