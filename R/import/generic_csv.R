@@ -13,11 +13,25 @@
 # well_metadata is populated by qres_import_metadata() (summary row) or
 # qres_import_plate_template() (per-well rows). This file does NOT touch well_metadata.
 
+# Remove all-NA / all-empty rows and columns from a data.table.
+# Plate readers sometimes prefix the data with an empty row or column.
+.strip_empty <- function(dt) {
+  is_empty_col <- vapply(names(dt), function(col) {
+    all(is.na(dt[[col]]) | trimws(as.character(dt[[col]])) %in% c('', 'NA'))
+  }, logical(1))
+  if (any(is_empty_col)) dt <- dt[, which(!is_empty_col), with = FALSE]
+  if (ncol(dt) > 0) {
+    is_empty_row <- rowSums(!is.na(dt) & trimws(as.matrix(dt)) != '' & as.matrix(dt) != 'NA') == 0L
+    if (any(is_empty_row)) dt <- dt[!is_empty_row, ]
+  }
+  dt
+}
+
 qres_raw_to_long <- function(raw_csv, dataset_id,
                               plate_id    = paste0(dataset_id, '__plate_1'),
                               signal_type = 'OD600') {
   requireNamespace('data.table')
-  dt       <- data.table::fread(raw_csv)
+  dt       <- .strip_empty(data.table::fread(raw_csv, fill = TRUE))
   time_col <- names(dt)[grepl('time', names(dt), ignore.case = TRUE)][1]
   if (is.na(time_col))
     stop('No column whose name contains "time" found in: ', raw_csv,

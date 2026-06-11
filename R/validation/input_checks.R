@@ -356,10 +356,18 @@ qres_validate_raw_csv <- function(csv_path) {
                 warnings = character(0), shape = NULL))
   }
 
-  dt <- tryCatch(
-    data.table::fread(csv_path, nrows = 5000),
-    error = function(e) NULL
-  )
+  dt <- tryCatch({
+    raw <- data.table::fread(csv_path, nrows = 5000, fill = TRUE)
+    # Drop all-empty rows / columns added by some plate readers
+    empty_col <- vapply(names(raw), function(col)
+      all(is.na(raw[[col]]) | trimws(as.character(raw[[col]])) %in% c('', 'NA')), logical(1))
+    if (any(empty_col)) raw <- raw[, which(!empty_col), with = FALSE]
+    if (ncol(raw) > 0) {
+      empty_row <- rowSums(!is.na(raw) & trimws(as.matrix(raw)) != '' & as.matrix(raw) != 'NA') == 0L
+      if (any(empty_row)) raw <- raw[!empty_row, ]
+    }
+    raw
+  }, error = function(e) NULL)
   if (is.null(dt)) {
     return(list(ok = FALSE,
                 issues = paste('Cannot parse CSV:', csv_path),

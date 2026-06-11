@@ -195,7 +195,7 @@ Manage your datasets on the **Manage my data** tab of the Submit page.
 | Home | `/` | 6-pictogram navigation grid |
 | Metadata Preparation | `/metadata_prep` | Plate template generator with required/optional fields, field reference |
 | Search & Browse | `/search` | Keyword + NL + perturbation-type filtering; download results |
-| Analyse & Compare | `/analyse` | Multi-dataset, multi-tool comparison; box plots, scatter, curves |
+| Analyse & Benchmark | `/analyse` | **Dataset comparison** (growth curves across datasets) + **Tool benchmarking** (gcplyr / growthrates / KinBiont side-by-side); box plots, scatter, curves |
 | Contact & NL Query | `/ask` | Free-text natural language queries (rule-based + Claude fallback) |
 | Submit Data | `/submit` | Upload raw CSV + metadata; choose release mode; view access key |
 | Manage my data | `/submit` (tab) | Delete dataset by 3-factor auth; check release status by email |

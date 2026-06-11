@@ -808,7 +808,7 @@ ui_ask <- fluidPage(
     tabPanel('Growth curves',
       br(),
       uiOutput('nl_curves_panel')),
-    tabPanel('Comparison plot',
+    tabPanel('Tool benchmarking',
       br(),
       tags$div(
         tags$b('Baseline subtraction', style = 'font-size:13px;'),
@@ -1406,6 +1406,7 @@ server <- function(input, output, session) {
   comp_upload_valid    <- reactiveVal(FALSE)
   comp_upload_tried    <- reactiveVal(FALSE)  # TRUE once user picks a file; FALSE after Clear
   comp_well_meta_rv    <- reactiveVal(NULL)   # parsed metadata CSV; NULL = manual mode
+  comp_replicates_rv   <- reactiveVal(list()) # named list: well → integer group ID
   comp_email_status    <- reactiveVal('')
   analyze_selected_ids <- reactiveVal(character(0))  # passed from Search Data
   analyse_mode_rv      <- reactiveVal(NULL)           # 'A', 'B', or 'C'
@@ -2272,14 +2273,29 @@ server <- function(input, output, session) {
           column(12,
             fileInput('comp_well_meta_file',
               tags$span('Well annotations',
-                tags$small(' (optional — CSV with well + type columns)', style = 'color:#888;')),
+                tags$small(' (optional — CSV with well, type, replicate columns)', style = 'color:#888;')),
               accept = '.csv', width = '100%')
           )
         ),
         uiOutput('comp_well_meta_status'),
         fluidRow(
-          column(7,
+          column(10,
             conditionalPanel('output.comp_has_well_meta !== true',
+              # Click-mode controls live outside renderUI so they don't reset on re-render
+              tags$div(style = 'display:flex; align-items:center; gap:10px; margin-bottom:4px; flex-wrap:wrap;',
+                tags$small(style = 'font-weight:600; color:#555;', 'Click mode:'),
+                radioButtons('plate_click_mode', NULL, inline = TRUE,
+                  choices = c('Blank'='blank', 'Control'='control',
+                              'Replicate'='replicate', 'Clear'='clear'),
+                  selected = 'blank')
+              ),
+              conditionalPanel('input.plate_click_mode === "replicate"',
+                tags$div(style = 'display:flex; align-items:center; gap:8px; margin-bottom:4px;',
+                  tags$small(style = 'color:#555;', 'Assign to group:'),
+                  numericInput('plate_rep_group_id', NULL,
+                               value = 1L, min = 1L, max = 99L, step = 1L, width = '70px')
+                )
+              ),
               uiOutput('comp_plate_map'),
               fluidRow(
                 column(6,
@@ -2296,11 +2312,19 @@ server <- function(input, output, session) {
             ),
             conditionalPanel('output.comp_has_well_meta === true',
               uiOutput('comp_well_meta_summary')
+            ),
+            # Replicate aggregation mode — shown when any replicate groups are assigned
+            conditionalPanel('output.comp_has_replicates === true',
+              tags$hr(style = 'margin:10px 0 6px;'),
+              tags$small(style = 'font-weight:600; color:#555;', 'Replicate handling for tool benchmarking:'),
+              radioButtons('comp_rep_agg_mode', NULL, width = '100%',
+                choices = c(
+                  'per_well'   = 'Per well — fit each well independently',
+                  'agg_before' = 'Average OD across replicates → fit one curve per group',
+                  'agg_after'  = 'Fit per well → average metrics per replicate group'
+                ),
+                selected = 'per_well')
             )
-          ),
-          column(5,
-            withSpinner(plotOutput('comp_upload_preview', height = '300px'),
-                        type = 6, color = '#5b9bd5')
           )
         ),
         br(),
@@ -2394,7 +2418,7 @@ server <- function(input, output, session) {
           hr(),
           tabsetPanel(id = 'mode_a_tabs',
             tabPanel('Growth curves',   br(), uiOutput('comp_curves_ui')),
-            tabPanel('Comparison plot', br(), uiOutput('comp_comparison_ui'))
+            tabPanel('Tool benchmarking', br(), uiOutput('comp_comparison_ui'))
           )
         )
       )
@@ -2424,7 +2448,7 @@ server <- function(input, output, session) {
         ),
         tabsetPanel(id = 'mode_b_tabs',
           tabPanel('Growth curves',   br(), uiOutput('comp_curves_ui')),
-          tabPanel('Comparison plot', br(), uiOutput('comp_comparison_ui'))
+          tabPanel('Tool benchmarking', br(), uiOutput('comp_comparison_ui'))
         )
       )
 
@@ -2457,7 +2481,7 @@ server <- function(input, output, session) {
         ),
         tabsetPanel(id = 'mode_c_tabs',
           tabPanel('Growth curves',   br(), uiOutput('comp_curves_ui')),
-          tabPanel('Comparison plot', br(), uiOutput('comp_comparison_ui'))
+          tabPanel('Tool benchmarking', br(), uiOutput('comp_comparison_ui'))
         )
       )
     }
@@ -2469,6 +2493,7 @@ server <- function(input, output, session) {
     comp_upload_valid(FALSE)
     comp_upload_tried(FALSE)
     comp_well_meta_rv(NULL)
+    comp_replicates_rv(list())
     updateSelectizeInput(session, 'comp_upload_blanks',
                          choices = character(0), selected = character(0))
     updateSelectizeInput(session, 'comp_upload_controls',
@@ -2688,8 +2713,13 @@ server <- function(input, output, session) {
       tags$small(style = 'color:#e74c3c;', icon('times'), ' Invalid format — check column names.')
   })
 
-  output$comp_has_well_meta <- reactive({ !is.null(comp_well_meta_rv()) })
-  outputOptions(output, 'comp_has_well_meta', suspendWhenHidden = FALSE)
+  output$comp_has_well_meta  <- reactive({ !is.null(comp_well_meta_rv()) })
+  output$comp_has_replicates <- reactive({ length(comp_replicates_rv()) > 0 })
+  outputOptions(output, 'comp_has_well_meta',  suspendWhenHidden = FALSE)
+  outputOptions(output, 'comp_has_replicates', suspendWhenHidden = FALSE)
+
+  .REP_PALETTE <- c('#e74c3c','#3498db','#2ecc71','#f39c12',
+                    '#9b59b6','#1abc9c','#e67e22','#16a085')
 
   output$comp_plate_map <- renderUI({
     req(comp_upload_valid(), is.null(comp_well_meta_rv()))
@@ -2697,7 +2727,7 @@ server <- function(input, output, session) {
     wells_in <- unique(raw$well)
     blanks   <- input$comp_upload_blanks   %||% character(0)
     controls <- input$comp_upload_controls %||% character(0)
-    mode_sel <- input$plate_click_mode %||% 'blank'
+    reps     <- comp_replicates_rv()
 
     row_letters <- sort(unique(sub('[0-9]+', '', wells_in)))
     col_nums    <- sort(as.integer(unique(sub('[A-Za-z]+', '', wells_in))))
@@ -2706,38 +2736,48 @@ server <- function(input, output, session) {
 
     header <- tags$tr(
       tags$th('', style = 'min-width:18px;'),
-      lapply(all_cols, function(cc)
-        tags$th(cc, style = 'min-width:26px;'))
+      lapply(all_cols, function(cc) tags$th(cc, style = 'min-width:26px;'))
     )
     body_rows <- lapply(all_rows, function(rr) {
       cells <- lapply(all_cols, function(cc) {
-        wname <- paste0(rr, cc)
+        wname    <- paste0(rr, cc)
+        on_click <- sprintf("Shiny.setInputValue('plate_well_click','%s',{priority:'event'})", wname)
         if (!wname %in% wells_in)
           return(tags$td(class = 'pm-empty', title = wname))
-        cls <- if (wname %in% blanks) 'pm-blank'
-               else if (wname %in% controls) 'pm-ctrl'
-               else 'pm-active'
-        tags$td(class = cls, title = wname,
-          onclick = sprintf("Shiny.setInputValue('plate_well_click','%s',{priority:'event'})", wname),
-          wname)
+        if (wname %in% blanks)
+          return(tags$td(class = 'pm-blank',  title = wname, onclick = on_click, wname))
+        if (wname %in% controls)
+          return(tags$td(class = 'pm-ctrl',   title = wname, onclick = on_click, wname))
+        if (!is.null(reps[[wname]])) {
+          gid <- reps[[wname]]
+          bg  <- .REP_PALETTE[(gid - 1L) %% length(.REP_PALETTE) + 1L]
+          return(tags$td(
+            style   = sprintf('width:26px;height:26px;background:%s;color:#fff;border:1px solid #ccc;cursor:pointer;text-align:center;font-size:9px;vertical-align:middle;', bg),
+            title   = sprintf('%s (Rep %d)', wname, gid),
+            onclick = on_click, wname))
+        }
+        tags$td(class = 'pm-active', title = wname, onclick = on_click, wname)
       })
       tags$tr(tags$th(rr), cells)
     })
 
+    rep_groups  <- sort(unique(as.integer(unlist(reps))))
+    rep_legend  <- lapply(rep_groups, function(gid) {
+      bg <- .REP_PALETTE[(gid - 1L) %% length(.REP_PALETTE) + 1L]
+      tags$span(style = 'margin-right:10px;',
+        tags$span(style = sprintf('display:inline-block;width:11px;height:11px;background:%s;border:1px solid #bbb;vertical-align:middle;margin-right:3px;', bg)),
+        sprintf('Rep %d', gid))
+    })
     legend <- tags$div(style = 'font-size:11px; color:#888; margin-top:5px;',
-      lapply(list(c('#ffd700','#333','Blank'), c('#2c2c2c','#fff','Control'),
-                  c('#d5e8f5','#444','Active')), function(x)
-        tags$span(style = sprintf('margin-right:10px;'),
-          tags$span(style = sprintf('display:inline-block;width:11px;height:11px;background:%s;border:1px solid #bbb;vertical-align:middle;margin-right:3px;', x[1])),
-          x[3])))
+      lapply(list(c('#ffd700','Blank'), c('#2c2c2c','Control'), c('#d5e8f5','Active')),
+             function(x)
+               tags$span(style = 'margin-right:10px;',
+                 tags$span(style = sprintf('display:inline-block;width:11px;height:11px;background:%s;border:1px solid #bbb;vertical-align:middle;margin-right:3px;', x[1])),
+                 x[2])),
+      rep_legend
+    )
 
     tagList(
-      tags$div(style = 'display:flex; align-items:center; gap:10px; margin-bottom:4px;',
-        tags$small(style = 'font-weight:600; color:#555;', 'Click mode:'),
-        radioButtons('plate_click_mode', NULL, inline = TRUE,
-                     choices = c('Blank' = 'blank', 'Control' = 'control', 'Clear' = 'clear'),
-                     selected = mode_sel)
-      ),
       tags$div(class = 'plate-map-wrap',
         tags$table(class = 'pm-table', header, body_rows)
       ),
@@ -2776,23 +2816,31 @@ server <- function(input, output, session) {
   observeEvent(input$plate_well_click, {
     wname    <- input$plate_well_click
     mode_sel <- input$plate_click_mode %||% 'blank'
-    raw      <- comp_upload_rv()
-    req(!is.null(raw))
-    wells  <- unique(raw$well)
+    req(!is.null(comp_upload_rv()))
     blanks   <- input$comp_upload_blanks   %||% character(0)
     controls <- input$comp_upload_controls %||% character(0)
+    reps     <- comp_replicates_rv()
     if (mode_sel == 'blank') {
-      blanks   <- if (wname %in% blanks) setdiff(blanks, wname) else c(blanks, wname)
-      controls <- setdiff(controls, wname)
+      blanks      <- if (wname %in% blanks) setdiff(blanks, wname) else c(blanks, wname)
+      controls    <- setdiff(controls, wname)
+      reps[[wname]] <- NULL
     } else if (mode_sel == 'control') {
-      controls <- if (wname %in% controls) setdiff(controls, wname) else c(controls, wname)
-      blanks   <- setdiff(blanks, wname)
-    } else {
-      blanks   <- setdiff(blanks, wname)
-      controls <- setdiff(controls, wname)
+      controls    <- if (wname %in% controls) setdiff(controls, wname) else c(controls, wname)
+      blanks      <- setdiff(blanks, wname)
+      reps[[wname]] <- NULL
+    } else if (mode_sel == 'replicate') {
+      gid <- as.integer(input$plate_rep_group_id %||% 1L)
+      blanks      <- setdiff(blanks, wname)
+      controls    <- setdiff(controls, wname)
+      reps[[wname]] <- if (identical(reps[[wname]], gid)) NULL else gid
+    } else {   # clear
+      blanks      <- setdiff(blanks, wname)
+      controls    <- setdiff(controls, wname)
+      reps[[wname]] <- NULL
     }
     updateSelectizeInput(session, 'comp_upload_blanks',   selected = blanks)
     updateSelectizeInput(session, 'comp_upload_controls', selected = controls)
+    comp_replicates_rv(reps)
   })
 
   observeEvent(input$comp_well_meta_file, {
@@ -2819,16 +2867,21 @@ server <- function(input, output, session) {
     controls <- intersect(.norm(controls), raw_wells)
     updateSelectizeInput(session, 'comp_upload_blanks',   choices = raw_wells, selected = blanks,   server = TRUE)
     updateSelectizeInput(session, 'comp_upload_controls', choices = raw_wells, selected = controls, server = TRUE)
-    comp_well_meta_rv(meta)
-  })
 
-  output$comp_upload_preview <- renderPlot({
-    req(comp_upload_valid())
-    raw      <- comp_upload_rv()
-    ctrl     <- input$comp_upload_controls %||% character(0)
-    ctrl_ids <- raw$well_id[raw$well %in% ctrl]
-    qres_plot_growth(raw, log_y = FALSE, control_wells = ctrl_ids,
-                     title = 'Uploaded curves')
+    # Auto-detect replicate groups from metadata
+    rep_col <- intersect(tolower(names(meta)),
+                         c('replicate', 'rep', 'group', 'rep_group', 'replicate_id', 'replication'))
+    if (length(rep_col) > 0) {
+      rep_vals  <- meta[[rep_col[1]]]
+      rep_wells <- meta$well
+      rep_ids   <- as.integer(factor(rep_vals))   # normalise to 1, 2, 3…
+      reps      <- setNames(as.list(rep_ids), rep_wells)
+      reps      <- reps[names(reps) %in% raw_wells]
+      comp_replicates_rv(reps)
+    } else {
+      comp_replicates_rv(list())
+    }
+    comp_well_meta_rv(meta)
   })
 
   # ── Active dataset IDs (DB selection) + upload flag ───────────────────────
@@ -2841,6 +2894,47 @@ server <- function(input, output, session) {
   comp_has_upload <- reactive({
     isTRUE(comp_upload_valid()) && !is.null(comp_upload_rv())
   })
+
+  # ── Replicate aggregation helpers ─────────────────────────────────────────
+  # reps: named list well → integer group ID (from comp_replicates_rv)
+
+  .agg_replicates_before <- function(raw, reps) {
+    rep_df <- data.frame(well      = names(reps),
+                         rep_group = as.integer(unlist(reps)),
+                         stringsAsFactors = FALSE)
+    raw <- dplyr::left_join(as.data.frame(raw), rep_df, by = 'well')
+    unrep <- raw[is.na(raw$rep_group), setdiff(names(raw), 'rep_group')]
+    reped <- raw[!is.na(raw$rep_group), ]
+    if (nrow(reped) == 0) return(unrep)
+    agg <- reped |>
+      dplyr::group_by(rep_group, time_h) |>
+      dplyr::summarise(
+        value       = mean(value, na.rm = TRUE),
+        signal_type = dplyr::first(signal_type),
+        dataset_id  = dplyr::first(dataset_id),
+        plate_id    = dplyr::first(plate_id),
+        .groups     = 'drop'
+      ) |>
+      dplyr::mutate(well    = paste0('Rep', rep_group),
+                    well_id = paste0(dplyr::first(reped$dataset_id), '__Rep', rep_group)) |>
+      dplyr::select(-rep_group)
+    keep <- intersect(names(unrep), names(agg))
+    dplyr::bind_rows(unrep[, keep], agg[, keep])
+  }
+
+  .agg_metrics_after <- function(cmp, raw_orig, reps) {
+    well_map <- unique(as.data.frame(raw_orig)[, c('well', 'well_id')])
+    rep_df   <- data.frame(well      = names(reps),
+                           rep_group = paste0('Rep', as.integer(unlist(reps))),
+                           stringsAsFactors = FALSE)
+    well_map <- dplyr::left_join(well_map, rep_df, by = 'well')
+    cmp2 <- dplyr::left_join(cmp, well_map[, c('well_id', 'rep_group')], by = 'well_id')
+    cmp2$well_id <- ifelse(!is.na(cmp2$rep_group), cmp2$rep_group, cmp2$well_id)
+    cmp2 |>
+      dplyr::group_by(dataset_id, well_id, tool, metric_name, metric_unit, plot_label) |>
+      dplyr::summarise(metric_value = mean(metric_value, na.rm = TRUE), .groups = 'drop') |>
+      as.data.frame()
+  }
 
   # ── Combined raw data (for growth curves) ──────────────────────────────────
   comp_all_raw <- reactive({
@@ -2872,7 +2966,11 @@ server <- function(input, output, session) {
     })
 
     if (has_up) {
-      raw_up <- comp_upload_rv()
+      raw_up   <- comp_upload_rv()
+      agg_mode <- input$comp_rep_agg_mode %||% 'per_well'
+      reps     <- comp_replicates_rv()
+      if (agg_mode == 'agg_before' && length(reps) > 0)
+        raw_up <- .agg_replicates_before(raw_up, reps)
       raw_up$plot_label <- 'Uploaded data'
       raw_list <- c(raw_list, list(raw_up))
     }
@@ -2917,9 +3015,14 @@ server <- function(input, output, session) {
       lab
     }
 
+    agg_mode <- input$comp_rep_agg_mode %||% 'per_well'
+    reps     <- comp_replicates_rv()
+
     all_cmp <- lapply(all_ids, function(did) {
       if (did == '__upload__') {
         raw <- comp_upload_rv()
+        if (agg_mode == 'agg_before' && length(reps) > 0)
+          raw <- .agg_replicates_before(raw, reps)
       } else {
         raw <- tryCatch(qres_get_raw_curves(con, did), error = function(e) NULL)
       }
@@ -2930,12 +3033,15 @@ server <- function(input, output, session) {
       if (!is.null(cmp) && nrow(cmp) > 0) {
         cmp$dataset_id <- did
         cmp$plot_label <- .label(did)
+        if (did == '__upload__' && agg_mode == 'agg_after' && length(reps) > 0)
+          cmp <- .agg_metrics_after(cmp, comp_upload_rv(), reps)
       }
       cmp
     })
     dplyr::bind_rows(Filter(Negate(is.null), all_cmp))
   }) |> bindCache(comp_active_ids(), comp_has_upload(),
-                  input$comp_tools, input$comp_baseline)
+                  input$comp_tools, input$comp_baseline,
+                  input$comp_rep_agg_mode, length(comp_replicates_rv()))
 
   # ── Wide table for download ─────────────────────────────────────────────────
   .comp_wide_analyse <- reactive({
@@ -3015,13 +3121,13 @@ server <- function(input, output, session) {
   }) |> bindCache(comp_all_raw(), input$comp_log_y, input$comp_curves_baseline,
                   input$comp_upload_controls)
 
-  # ── Comparison plot tab UI ──────────────────────────────────────────────────
+  # ── Tool benchmarking tab UI ─────────────────────────────────────────────────
   output$comp_comparison_ui <- renderUI({
     ids    <- comp_active_ids()
     has_up <- comp_has_upload()
     if (length(ids) == 0 && !has_up)
       return(tags$div(style = 'color:dimgray; padding:30px; text-align:center;',
-        icon('arrow-left'), ' Select datasets in the Datasets tab to run the comparison.'))
+        icon('arrow-left'), ' Select datasets or upload a file to run tool benchmarking.'))
     tagList(
       tags$div(
         tags$b('Baseline subtraction', style = 'font-size:13px;'),
@@ -3100,6 +3206,7 @@ server <- function(input, output, session) {
       log_y    = isTRUE(input$comp_boxplot_log_y))
   }) |> bindCache(comp_active_ids(), comp_has_upload(),
                   input$comp_tools, input$comp_baseline,
+                  input$comp_rep_agg_mode, length(comp_replicates_rv()),
                   input$comp_metric, input$comp_boxplot_log_y)
 
   output$comp_params_table <- DT::renderDT({
@@ -4339,12 +4446,12 @@ server <- function(input, output, session) {
     if (n_sel > 0) {
       tags$p(style = 'font-size:12px; color:#2980b9; margin-bottom:4px;',
         icon('check-circle'),
-        sprintf(' %d dataset(s) selected — comparison plot and growth curves use only these.
+        sprintf(' %d dataset(s) selected — tool benchmarking and growth curves use only these.
                  Click rows to toggle; click elsewhere to deselect all.', n_sel))
     } else {
       tags$p(style = 'font-size:12px; color:#888; margin-bottom:4px;',
         icon('info-circle'),
-        ' Click one or more rows to restrict the comparison plot and growth curves to those datasets.')
+        ' Click one or more rows to restrict tool benchmarking and growth curves to those datasets.')
     }
   })
 

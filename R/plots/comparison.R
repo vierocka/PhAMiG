@@ -1,4 +1,4 @@
-# Cross-tool metric comparison plots.
+# Tool benchmarking plots — cross-tool metric comparison.
 # Input: long-format data frame from qres_compare_plugin_outputs()
 # with columns: dataset_id, well_id, metric_name, metric_value, tool
 
@@ -42,7 +42,7 @@ qres_plot_metric_comparison <- function(comparison_df, metric = 'mumax_percapita
     ggplot2::geom_jitter(width = 0.15, alpha = 0.55, size = 1.2) +
     ggplot2::theme_bw(base_size = 12) +
     ggplot2::labs(x = 'Tool', y = y_label,
-                  title = paste('Cross-tool comparison:', metric)) +
+                  title = paste('Tool benchmarking —', metric)) +
     ggplot2::theme(legend.position = 'none',
                    axis.text.x = ggplot2::element_text(angle = 30, hjust = 1))
 
