@@ -2396,7 +2396,17 @@ server <- function(input, output, session) {
                   uiOutput('comp_blank_range_status'),
                   selectizeInput('comp_upload_blanks', NULL,
                                  choices = NULL, multiple = TRUE,
-                                 options = list(placeholder = 'none selected'))
+                                 options = list(placeholder = 'none selected')),
+                  tags$div(style = 'margin-top:2px;',
+                    checkboxInput('comp_autodetect_blanks',
+                      tags$span(style = 'font-size:11px; font-weight:normal;',
+                        icon('wand-magic-sparkles', style = 'font-size:10px; color:#888;'),
+                        ' Auto-detect from OD signal'),
+                      value = FALSE),
+                    conditionalPanel('input.comp_autodetect_blanks === true',
+                      uiOutput('comp_autodetect_result')
+                    )
+                  )
                 ),
                 column(6,
                   tags$label('Control wells', class = 'control-label'),
@@ -2633,6 +2643,7 @@ server <- function(input, output, session) {
                          choices = character(0), selected = character(0))
     updateSelectizeInput(session, 'comp_upload_controls',
                          choices = character(0), selected = character(0))
+    updateCheckboxInput(session, 'comp_autodetect_blanks', value = FALSE)
     if ((analyse_mode_rv() %||% '') == 'C')
       analyse_mode_rv('B')
     else
@@ -2828,6 +2839,7 @@ server <- function(input, output, session) {
                          choices = character(0), selected = character(0))
     updateSelectizeInput(session, 'comp_upload_controls',
                          choices = character(0), selected = character(0))
+    updateCheckboxInput(session, 'comp_autodetect_blanks', value = FALSE)
     comp_upload_tried(TRUE)
     raw_path  <- input$comp_upload_file$datapath
     is_excel  <- grepl('\\.xlsx?$', input$comp_upload_file$name, ignore.case = TRUE)
@@ -3077,6 +3089,60 @@ server <- function(input, output, session) {
         tags$small(style='color:#27ae60;', icon('check'),
                    sprintf(' +%d well%s added.', res$n_new, if(res$n_new>1) 's' else ''))
       else NULL)
+  }, ignoreNULL = TRUE, ignoreInit = TRUE)
+
+  # Per-well mean + sd across all timepoints; flags wells where mean + sd < 0.05.
+  # Those are candidates to be blanks (flat, near-zero OD throughout the run).
+  comp_blank_candidates <- reactive({
+    raw <- comp_upload_rv()
+    if (is.null(raw) || nrow(raw) == 0)
+      return(data.frame(well = character(0), mean_od = numeric(0),
+                        sd_od = numeric(0), candidate = logical(0)))
+    dplyr::arrange(
+      dplyr::mutate(
+        dplyr::summarise(dplyr::group_by(raw, well),
+          mean_od = mean(value, na.rm = TRUE),
+          sd_od   = sd(value,   na.rm = TRUE),
+          .groups = 'drop'),
+        sd_od     = dplyr::coalesce(sd_od, 0),
+        candidate = (mean_od + sd_od) < 0.05
+      ),
+      mean_od
+    )
+  })
+
+  output$comp_autodetect_result <- renderUI({
+    req(isTRUE(input$comp_autodetect_blanks))
+    req(!is.null(comp_upload_rv()))
+    df    <- comp_blank_candidates()
+    cands <- df$well[df$candidate]
+    if (length(cands) == 0)
+      return(tags$div(style = 'font-size:12px; color:#888; padding:2px 0;',
+        icon('circle-info'), ' No wells found with mean + sd < 0.05.'))
+    tagList(
+      tags$div(style = 'font-size:12px; margin-bottom:3px;',
+        tags$strong(length(cands)),
+        tags$span(style = 'color:#555;',
+          sprintf(' candidate blank%s (mean + sd < 0.05 OD):',
+                  if (length(cands) > 1) 's' else ''))
+      ),
+      tags$div(
+        title = 'Click to select all text, then copy',
+        style = paste0('background:#f0f7f0; border:1px solid #c3e6cb; border-radius:3px;',
+                       'padding:3px 7px; font-family:monospace; font-size:12px;',
+                       'margin-bottom:4px; cursor:text; user-select:all;'),
+        paste(sort(cands), collapse = ', ')
+      ),
+      actionButton('comp_autodetect_add_blanks', 'Add to blanks',
+                   class = 'btn btn-xs btn-success', icon = icon('plus'),
+                   style = 'height:24px; padding:2px 8px; font-size:11px;')
+    )
+  })
+
+  observeEvent(input$comp_autodetect_add_blanks, {
+    cands  <- comp_blank_candidates()$well[comp_blank_candidates()$candidate]
+    merged <- union(input$comp_upload_blanks %||% character(0), cands)
+    updateSelectizeInput(session, 'comp_upload_blanks', selected = merged)
   }, ignoreNULL = TRUE, ignoreInit = TRUE)
 
   observeEvent(input$comp_well_meta_file, {
