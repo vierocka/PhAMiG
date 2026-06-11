@@ -645,10 +645,10 @@ ui_search <- fluidPage(
       # Per-dataset detail (shown when a row is selected)
       conditionalPanel('output.has_selected_dataset',
         tags$div(class = 'dataset-detail',
+          # Shared dataset picker — drives both Links and QC tabs
+          uiOutput('detail_selector_ui'),
           tabsetPanel(id = 'datasetDetailTabs',
             tabPanel('Links',
-              br(),
-              uiOutput('selected_info'),
               br(),
               uiOutput('ncbi_link_box'),
               uiOutput('doi_link_box')
@@ -1388,6 +1388,7 @@ server <- function(input, output, session) {
   onStop(function() qres_disconnect(con))
 
   selected_dataset     <- reactiveVal(NULL)
+  detail_dataset_id    <- reactiveVal(NULL)   # which of the selected datasets to show in Links / QC
   dataset_results      <- reactiveVal(data.frame())
   comp_filtered_rv     <- reactiveVal(data.frame())
   comp_upload_rv       <- reactiveVal(NULL)
@@ -1824,24 +1825,43 @@ server <- function(input, output, session) {
   observeEvent(input$dataset_table_rows_selected, {
     df  <- display_results()
     row <- input$dataset_table_rows_selected
-    if (length(row) >= 1 && nrow(df) >= row[1])
-      selected_dataset(df$dataset_id[row[1]])
+    if (length(row) >= 1 && nrow(df) >= row[1]) {
+      id <- df$dataset_id[row[1]]
+      selected_dataset(id)
+      detail_dataset_id(id)   # reset detail view to first selected row
+    }
   })
 
-  output$selected_info <- renderUI({
-    req(selected_dataset())
+  # Shared picker shown above the Links / QC tabs — keeps both tabs in sync
+  output$detail_selector_ui <- renderUI({
     sel <- input$dataset_table_rows_selected
-    n   <- length(sel)
-    lbl <- if (n > 1)
-      sprintf('Analyse → Repository (%d datasets)', n)
-    else
-      'Analyse → Repository'
-    tagList(
-      tags$p(tags$strong('Selected: '), selected_dataset()),
-      actionButton('go_to_comparison', lbl,
-                   class = 'btn-info btn-sm', icon = icon('chart-bar'))
-    )
+    df  <- display_results()
+    if (length(sel) == 0 || nrow(df) == 0) return(NULL)
+    ids <- df$dataset_id[sel]
+    n   <- length(ids)
+    cur <- detail_dataset_id() %||% ids[1]
+
+    if (n == 1) {
+      tags$p(style = 'font-size:13px; color:#555; margin:0 0 6px;',
+             tags$strong('Dataset: '), ids[1])
+    } else {
+      choices <- setNames(ids, sprintf('%d  —  %s', seq_along(ids), ids))
+      tags$div(style = 'margin-bottom:6px;',
+        radioButtons('detail_dataset_selector',
+                     label  = tags$span(style = 'font-size:12px; font-weight:600; color:#555;',
+                                        'Viewing:'),
+                     choices  = choices,
+                     selected = if (cur %in% ids) cur else ids[1],
+                     inline   = TRUE)
+      )
+    }
   })
+
+  observeEvent(input$detail_dataset_selector, {
+    detail_dataset_id(input$detail_dataset_selector)
+  })
+
+  output$selected_info <- renderUI({ NULL })   # removed — big green button replaces this
 
   observeEvent(input$go_to_comparison, {
     sel <- input$dataset_table_rows_selected
@@ -1859,11 +1879,11 @@ server <- function(input, output, session) {
 
   # ── Raw curves ─────────────────────────────────────────────────────────────
   raw_long <- reactive({
-    req(selected_dataset())
+    req(detail_dataset_id())
     tryCatch(
-      qres_get_raw_curves(con, selected_dataset()),
+      qres_get_raw_curves(con, detail_dataset_id()),
       error = function(e) {
-        validate(need(FALSE, paste('No raw measurements yet for', selected_dataset(),
+        validate(need(FALSE, paste('No raw measurements yet for', detail_dataset_id(),
                                    '— click "Initialize / refresh DB" first.')))
       }
     )
@@ -2001,11 +2021,11 @@ server <- function(input, output, session) {
 
   # ── NCBI taxonomy link ─────────────────────────────────────────────────────
   output$ncbi_link_box <- renderUI({
-    req(selected_dataset())
+    req(detail_dataset_id())
     wm <- tryCatch(
       DBI::dbGetQuery(con,
         "SELECT DISTINCT species, taxon_id FROM well_metadata WHERE plate_id LIKE ? LIMIT 1",
-        params = list(paste0(selected_dataset(), '%'))),
+        params = list(paste0(detail_dataset_id(), '%'))),
       error = function(e) NULL
     )
     if (is.null(wm) || nrow(wm) == 0) return(NULL)
@@ -2031,11 +2051,11 @@ server <- function(input, output, session) {
 
   # ── DOI / PubMed link for selected dataset ────────────────────────────────
   output$doi_link_box <- renderUI({
-    req(selected_dataset())
+    req(detail_dataset_id())
     d <- tryCatch(
       DBI::dbGetQuery(con,
         "SELECT doi, source_url, authors, year, title FROM dataset WHERE dataset_id = ? LIMIT 1",
-        params = list(selected_dataset())),
+        params = list(detail_dataset_id())),
       error = function(e) NULL
     )
     if (is.null(d) || nrow(d) == 0) return(NULL)
