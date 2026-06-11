@@ -3400,8 +3400,14 @@ server <- function(input, output, session) {
       if (length(db_ids) > 0)
         nl_blank_ids <- c(nl_blank_ids,
           tryCatch(qres_get_blank_wells(con, db_ids), error = function(e) character(0)))
-      if (has_up)
-        nl_blank_ids <- c(nl_blank_ids, input$comp_upload_blanks %||% character(0))
+      # Convert well names → well_ids for the upload dataset
+      blank_names <- input$comp_upload_blanks %||% character(0)
+      if (has_up && length(blank_names) > 0) {
+        up_raw <- comp_upload_rv()
+        if (!is.null(up_raw))
+          nl_blank_ids <- union(nl_blank_ids,
+                                unique(up_raw$well_id[up_raw$well %in% blank_names]))
+      }
     }
 
     df_meta <- comp_filtered_rv()
@@ -3435,6 +3441,9 @@ server <- function(input, output, session) {
       }
       if (is.null(raw) || nrow(raw) == 0) return(NULL)
       raw <- .apply_baseline(raw, method = nl_bm, blank_ids = nl_blank_ids)
+      # Exclude blank wells from fitting
+      if (length(nl_blank_ids) > 0)
+        raw <- raw[!raw$well_id %in% nl_blank_ids, , drop = FALSE]
       cmp <- tryCatch(qres_compare_plugin_outputs(raw, plugins = nl_tools),
                       error = function(e) NULL)
       if (!is.null(cmp) && nrow(cmp) > 0) {
@@ -3520,12 +3529,21 @@ server <- function(input, output, session) {
   comp_curves_data <- reactive({
     raw <- comp_all_raw()
     req(!is.null(raw) && nrow(raw) > 0)
-    bm  <- input$comp_curves_baseline %||% 'none'
-    bids <- if (bm == 'blank_wells')
+    bm <- input$comp_curves_baseline %||% 'none'
+    # Convert upload blank well names → well_ids (apply_baseline matches on well_id)
+    blank_names  <- input$comp_upload_blanks %||% character(0)
+    blank_ids_up <- if (length(blank_names) > 0)
+      unique(raw$well_id[raw$well %in% blank_names]) else character(0)
+    blank_ids_db <- if (bm == 'blank_wells')
       tryCatch(qres_get_blank_wells(con, comp_active_ids()), error = function(e) character(0))
     else character(0)
-    bids <- c(bids, input$comp_upload_blanks %||% character(0))
-    .apply_baseline(raw, method = bm, blank_ids = bids)
+    all_blank_ids <- union(blank_ids_db, blank_ids_up)
+    # Apply baseline correction while blanks are still in the data
+    raw <- .apply_baseline(raw, method = bm, blank_ids = all_blank_ids)
+    # Remove blank wells so they never appear in the plot or tooltip
+    if (length(all_blank_ids) > 0)
+      raw <- raw[!raw$well_id %in% all_blank_ids, , drop = FALSE]
+    raw
   })
 
   output$comp_curves <- renderPlot({
