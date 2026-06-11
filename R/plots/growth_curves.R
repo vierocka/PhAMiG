@@ -21,15 +21,48 @@
       dplyr::mutate(value = value - mean(utils::head(value, 3), na.rm = TRUE)) |>
       dplyr::ungroup()
   } else if (method == 'blank_wells' && length(blank_ids) > 0) {
-    blank_mean <- raw_long |>
-      dplyr::filter(well_id %in% blank_ids) |>
-      dplyr::group_by(time_h) |>
-      dplyr::summarise(blank_val = mean(value, na.rm = TRUE), .groups = 'drop')
-    raw_long <- raw_long |>
-      dplyr::left_join(blank_mean, by = 'time_h') |>
-      dplyr::mutate(value = value - dplyr::coalesce(blank_val, 0)) |>
-      dplyr::select(-blank_val)
+    # Per-dataset subtraction when multiple datasets are present prevents
+    # cross-experiment blank contamination (different experiments may have
+    # different baseline OD levels and incompatible time axes).
+    if ('dataset_id' %in% names(raw_long) && dplyr::n_distinct(raw_long$dataset_id) > 1L) {
+      blank_mean <- raw_long |>
+        dplyr::filter(well_id %in% blank_ids) |>
+        dplyr::group_by(dataset_id, time_h) |>
+        dplyr::summarise(blank_val = mean(value, na.rm = TRUE), .groups = 'drop')
+      raw_long <- raw_long |>
+        dplyr::left_join(blank_mean, by = c('dataset_id', 'time_h')) |>
+        dplyr::mutate(value = value - dplyr::coalesce(blank_val, 0)) |>
+        dplyr::select(-blank_val)
+    } else {
+      blank_mean <- raw_long |>
+        dplyr::filter(well_id %in% blank_ids) |>
+        dplyr::group_by(time_h) |>
+        dplyr::summarise(blank_val = mean(value, na.rm = TRUE), .groups = 'drop')
+      raw_long <- raw_long |>
+        dplyr::left_join(blank_mean, by = 'time_h') |>
+        dplyr::mutate(value = value - dplyr::coalesce(blank_val, 0)) |>
+        dplyr::select(-blank_val)
+    }
   }
+  raw_long
+}
+
+# Apply baseline correction and remove blank wells.
+# Shared by Analyze Data and NL Query so blank handling is identical everywhere.
+#
+# blank_names: well short names (e.g. 'A1') from manual text input; resolved to
+#              well_ids via raw_long so cross-dataset contamination is impossible
+# blank_ids:   well_ids already resolved (from DB or auto-detect)
+qres_prepare_curves <- function(raw_long, method = 'none',
+                                blank_names = character(0),
+                                blank_ids   = character(0)) {
+  if (is.null(raw_long) || nrow(raw_long) == 0) return(raw_long)
+  name_ids      <- if (length(blank_names) > 0 && 'well' %in% names(raw_long))
+    unique(raw_long$well_id[raw_long$well %in% blank_names]) else character(0)
+  all_blank_ids <- union(blank_ids, name_ids)
+  raw_long      <- .apply_baseline(raw_long, method = method, blank_ids = all_blank_ids)
+  if (length(all_blank_ids) > 0)
+    raw_long <- raw_long[!raw_long$well_id %in% all_blank_ids, , drop = FALSE]
   raw_long
 }
 

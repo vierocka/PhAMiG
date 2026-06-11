@@ -808,6 +808,7 @@ ui_ask <- fluidPage(
   uiOutput('nl_description_box'),
   uiOutput('nl_sql_box'),
   br(),
+  uiOutput('nl_blank_ctrl_panel'),
   tabsetPanel(id = 'nl_result_tabs',
     tabPanel('Results table',
       br(),
@@ -1497,7 +1498,7 @@ server <- function(input, output, session) {
                            choices = c('(none)' = '', qres_get_distinct_authors(con)),
                            server  = TRUE)
       updateSelectizeInput(session, 'comp_species',
-                           choices = c('', qres_get_distinct_species(con)), server = TRUE)
+                           choices = c('' , qres_get_species_with_counts(con)), server = TRUE)
       updateSelectizeInput(session, 'comp_perturb_type',
                            choices = c('', qres_get_distinct_perturbation_types(con)),
                            server = TRUE)
@@ -1534,9 +1535,8 @@ server <- function(input, output, session) {
         }
       }
 
-      species_list <- qres_get_distinct_species(con)
       updateSelectizeInput(session, 'comp_species',
-                           choices = c('', species_list), server = TRUE)
+                           choices = c('', qres_get_species_with_counts(con)), server = TRUE)
       updateSelectizeInput(session, 'comp_author',
                            choices = c('(none)' = '', qres_get_distinct_authors(con)),
                            server  = TRUE)
@@ -2724,6 +2724,8 @@ server <- function(input, output, session) {
     updateSelectizeInput(session, 'comp_upload_controls',
                          choices = character(0), selected = character(0))
     updateCheckboxInput(session, 'comp_autodetect_blanks', value = FALSE)
+    updateRadioButtons(session,   'comp_plate_view',   selected = 'together')
+    updateRadioButtons(session,   'comp_rep_agg_mode', selected = 'per_well')
     if ((analyse_mode_rv() %||% '') == 'C')
       analyse_mode_rv('B')
     else
@@ -2761,22 +2763,10 @@ server <- function(input, output, session) {
   # Author → narrows species list
   observeEvent(input$comp_author, {
     au <- input$comp_author %||% ''
-    sp_choices <- if (nzchar(au)) {
-      tryCatch({
-        rows <- DBI::dbGetQuery(con,
-          "SELECT DISTINCT w.species
-           FROM dataset d
-           LEFT JOIN plate p USING(dataset_id)
-           LEFT JOIN well_metadata w USING(plate_id)
-           WHERE lower(coalesce(d.authors,'')) LIKE lower(?)
-             AND w.species IS NOT NULL
-           ORDER BY w.species",
-          params = list(paste0('%', au, '%')))
-        c('', rows$species[nzchar(rows$species)])
-      }, error = function(e) c(''))
-    } else {
-      c('', tryCatch(qres_get_distinct_species(con), error = function(e) character(0)))
-    }
+    sp_choices <- tryCatch(
+      c('', qres_get_species_with_counts(con, author = if (nzchar(au)) au else NULL)),
+      error = function(e) c('')
+    )
     updateSelectizeInput(session, 'comp_species', choices = sp_choices,
                          selected = '', server = TRUE)
   }, ignoreInit = TRUE)
@@ -2932,6 +2922,8 @@ server <- function(input, output, session) {
     updateSelectizeInput(session, 'comp_upload_controls',
                          choices = character(0), selected = character(0))
     updateCheckboxInput(session, 'comp_autodetect_blanks', value = FALSE)
+    updateRadioButtons(session,   'comp_plate_view',   selected = 'together')
+    updateRadioButtons(session,   'comp_rep_agg_mode', selected = 'per_well')
     comp_upload_tried(TRUE)
     raw_path  <- input$comp_upload_file$datapath
     is_excel  <- grepl('\\.xlsx?$', input$comp_upload_file$name, ignore.case = TRUE)
@@ -3529,21 +3521,13 @@ server <- function(input, output, session) {
   comp_curves_data <- reactive({
     raw <- comp_all_raw()
     req(!is.null(raw) && nrow(raw) > 0)
-    bm <- input$comp_curves_baseline %||% 'none'
-    # Convert upload blank well names → well_ids (apply_baseline matches on well_id)
+    bm           <- input$comp_curves_baseline %||% 'none'
     blank_names  <- input$comp_upload_blanks %||% character(0)
-    blank_ids_up <- if (length(blank_names) > 0)
-      unique(raw$well_id[raw$well %in% blank_names]) else character(0)
     blank_ids_db <- if (bm == 'blank_wells')
       tryCatch(qres_get_blank_wells(con, comp_active_ids()), error = function(e) character(0))
     else character(0)
-    all_blank_ids <- union(blank_ids_db, blank_ids_up)
-    # Apply baseline correction while blanks are still in the data
-    raw <- .apply_baseline(raw, method = bm, blank_ids = all_blank_ids)
-    # Remove blank wells so they never appear in the plot or tooltip
-    if (length(all_blank_ids) > 0)
-      raw <- raw[!raw$well_id %in% all_blank_ids, , drop = FALSE]
-    raw
+    qres_prepare_curves(raw, method = bm,
+                        blank_names = blank_names, blank_ids = blank_ids_db)
   })
 
   output$comp_curves <- renderPlot({
@@ -3551,9 +3535,21 @@ server <- function(input, output, session) {
     ctrl_well_ids <- raw$well_id[raw$well %in% (input$comp_upload_controls %||% character(0))]
     multiplate    <- isTRUE(comp_upload_n_plates() > 1L)
     per_plate     <- multiplate && (input$comp_plate_view %||% 'together') == 'per_plate'
-    colour_col    <- if (multiplate && !per_plate) 'plate_id'
-                     else if ('plot_label' %in% names(raw)) 'plot_label'
-                     else 'dataset_id'
+    if (multiplate && !per_plate) {
+      # Map internal plate_ids → human-readable labels (sheet names or "Plate N")
+      lbls <- comp_plate_labels_rv()
+      raw$plate_label <- if (!is.null(lbls) && 'plate_id' %in% names(raw)) {
+        mapped <- lbls[raw$plate_id]
+        ifelse(is.na(mapped), sub('.*__plate_', 'Plate ', raw$plate_id), mapped)
+      } else {
+        sub('.*__plate_', 'Plate ', raw$plate_id)
+      }
+      colour_col <- 'plate_label'
+    } else if ('plot_label' %in% names(raw)) {
+      colour_col <- 'plot_label'
+    } else {
+      colour_col <- 'dataset_id'
+    }
     p <- qres_plot_growth(raw, log_y = input$comp_log_y %||% FALSE,
                           colour_by     = colour_col,
                           control_wells = ctrl_well_ids,
@@ -5084,6 +5080,71 @@ server <- function(input, output, session) {
         ' No blank wells designated in these datasets. Select a different method.')
   })
 
+  # Blank/control entry panel shown above both NL tabs when datasets are active.
+  output$nl_blank_ctrl_panel <- renderUI({
+    ids <- nl_active_ids()
+    if (is.null(ids) || length(ids) == 0) return(NULL)
+    tagList(
+      hr(style = 'margin: 6px 0;'),
+      fluidRow(
+        column(6,
+          opt_label('Blank wells',
+            'Well names or ranges (e.g. A1:H1). Auto-detect uses SD < 0.05 per well.'),
+          textInput('nl_blank_range', NULL, value = '',
+            placeholder = 'e.g. A1:H1, or use auto-detect', width = '100%'),
+          checkboxInput('nl_autodetect_blanks',
+            tagList('Auto-detect from OD signal (SD < 0.05)',
+                    tip('Flat wells — likely blank medium — are detected automatically.')),
+            value = TRUE),
+          uiOutput('nl_blank_autodetect_result')
+        ),
+        column(6,
+          opt_label('Control wells',
+            'Plotted in black; excluded from curve fitting.'),
+          textInput('nl_ctrl_range', NULL, value = '',
+            placeholder = 'e.g. H12', width = '100%')
+        )
+      ),
+      hr(style = 'margin: 6px 0;')
+    )
+  })
+
+  # Auto-detect blank candidates for NL datasets: per-dataset SD < 0.05.
+  nl_blank_candidates <- reactive({
+    ids <- nl_active_ids()
+    req(!is.null(ids) && length(ids) > 0)
+    all_raw <- lapply(ids, function(did) {
+      tryCatch(qres_get_raw_curves(con, did), error = function(e) NULL)
+    })
+    raw <- dplyr::bind_rows(Filter(Negate(is.null), all_raw))
+    req(nrow(raw) > 0)
+    dplyr::arrange(
+      dplyr::mutate(
+        dplyr::summarise(dplyr::group_by(raw, well),
+          mean_od = mean(value, na.rm = TRUE),
+          sd_od   = sd(value,   na.rm = TRUE),
+          .groups = 'drop'),
+        sd_od     = dplyr::coalesce(sd_od, 0),
+        candidate = sd_od < 0.05
+      ),
+      sd_od
+    )
+  })
+
+  output$nl_blank_autodetect_result <- renderUI({
+    req(isTRUE(input$nl_autodetect_blanks))
+    df <- tryCatch(nl_blank_candidates(), error = function(e) NULL)
+    req(!is.null(df) && nrow(df) > 0)
+    hits <- df$well[df$candidate]
+    if (length(hits) == 0)
+      return(tags$small(style = 'color:#888;', 'No flat wells found (SD < 0.05).'))
+    tagList(
+      tags$small(style = 'color:#27ae60;',
+        icon('check'), sprintf(' %d candidate(s): %s', length(hits),
+                               paste(hits, collapse = ', ')))
+    )
+  })
+
   # ── Shared computation: run plugins on NL-selected datasets ─────────────────
   # Cached without nl_metric_select (plot filters post-hoc; table shows all).
   nl_comp_metrics_long <- reactive({
@@ -5106,6 +5167,15 @@ server <- function(input, output, session) {
     nl_blank_ids <- if (nl_bm == 'blank_wells')
       tryCatch(qres_get_blank_wells(con, ids), error = function(e) character(0))
     else character(0)
+    # Manual blank names: auto-detect (if enabled) takes priority over text input
+    nl_blank_names <- {
+      if (isTRUE(input$nl_autodetect_blanks)) {
+        cands <- tryCatch(nl_blank_candidates(), error = function(e) NULL)
+        if (!is.null(cands)) cands$well[cands$candidate] else character(0)
+      } else {
+        .parse_wells(input$nl_blank_range %||% '')
+      }
+    }
 
     .nl_label <- function(did) {
       row   <- res$data[res$data$dataset_id == did, ][1, ]
@@ -5128,7 +5198,9 @@ server <- function(input, output, session) {
     all_cmp <- lapply(ids, function(did) {
       raw <- tryCatch(qres_get_raw_curves(con, did), error = function(e) NULL)
       if (is.null(raw)) return(NULL)
-      raw <- .apply_baseline(raw, method = nl_bm, blank_ids = nl_blank_ids)
+      raw <- qres_prepare_curves(raw, method = nl_bm,
+                                  blank_names = nl_blank_names,
+                                  blank_ids   = nl_blank_ids)
       cmp <- tryCatch(
         qres_compare_plugin_outputs(raw, plugins = nl_tools),
         error = function(e) NULL)
@@ -5140,7 +5212,8 @@ server <- function(input, output, session) {
     })
     dplyr::bind_rows(Filter(Negate(is.null), all_cmp))
   }) |> bindCache(nl_active_ids(), input$nl_table_rows_selected,
-                  input$nl_comp_tools, input$nl_comp_baseline)
+                  input$nl_comp_tools, input$nl_comp_baseline,
+                  input$nl_autodetect_blanks, input$nl_blank_range)
 
   output$nl_comp_plot <- renderPlot({
     combined <- nl_comp_metrics_long()
@@ -5286,16 +5359,26 @@ server <- function(input, output, session) {
     combined <- dplyr::bind_rows(Filter(Negate(is.null), raw_list))
     if (nrow(combined) == 0) return(NULL)
 
-    # Apply display baseline correction
-    nl_bmethod  <- input$nl_baseline %||% 'none'
-    nl_bids     <- if (nl_bmethod == 'blank_wells')
+    nl_bmethod     <- input$nl_baseline %||% 'none'
+    nl_bids        <- if (nl_bmethod == 'blank_wells')
       tryCatch(qres_get_blank_wells(con, ids), error = function(e) character(0))
     else character(0)
-    combined <- .apply_baseline(combined, method = nl_bmethod, blank_ids = nl_bids)
-
-    colour_col <- if ('plot_label' %in% names(combined)) 'plot_label' else 'dataset_id'
+    nl_blank_names <- if (isTRUE(input$nl_autodetect_blanks)) {
+      cands <- tryCatch(nl_blank_candidates(), error = function(e) NULL)
+      if (!is.null(cands)) cands$well[cands$candidate] else character(0)
+    } else {
+      .parse_wells(input$nl_blank_range %||% '')
+    }
+    nl_ctrl_names <- .parse_wells(input$nl_ctrl_range %||% '')
+    combined      <- qres_prepare_curves(combined, method = nl_bmethod,
+                                          blank_names = nl_blank_names,
+                                          blank_ids   = nl_bids)
+    ctrl_ids    <- combined$well_id[combined$well %in% nl_ctrl_names]
+    colour_col  <- if ('plot_label' %in% names(combined)) 'plot_label' else 'dataset_id'
+    n_groups    <- length(unique(combined[[colour_col]]))
+    colour_by   <- if (n_groups <= 1L) 'well' else colour_col
     qres_plot_growth(combined, log_y = input$nl_log_y %||% FALSE,
-                     colour_by = colour_col, title = NULL)
+                     colour_by = colour_by, control_wells = ctrl_ids, title = NULL)
   })
 }
 

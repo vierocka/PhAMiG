@@ -234,6 +234,35 @@ qres_get_distinct_species <- function(con) {
   res$species
 }
 
+# Named character vector: value = species name (used in SQL); name = display label
+# showing unique strain count when >1 strain exists, e.g. "E. coli (3 strains)".
+qres_get_species_with_counts <- function(con, author = NULL) {
+  if (!is.null(author) && nzchar(trimws(author))) {
+    author_safe <- qres_sql_safe(trimws(author))
+    sql <- sprintf(
+      "SELECT w.species,
+              COUNT(DISTINCT CASE WHEN w.strain IS NOT NULL AND trim(w.strain) != '' THEN w.strain END) AS n_strains
+       FROM well_metadata w
+       WHERE w.species IS NOT NULL
+         AND w.plate_id IN (
+           SELECT p.plate_id FROM plate p
+           JOIN dataset d USING(dataset_id)
+           WHERE lower(coalesce(d.authors,'')) LIKE lower('%%%s%%'))
+       GROUP BY w.species ORDER BY w.species", author_safe)
+  } else {
+    sql <- "SELECT species,
+                   COUNT(DISTINCT CASE WHEN strain IS NOT NULL AND trim(strain) != '' THEN strain END) AS n_strains
+            FROM well_metadata WHERE species IS NOT NULL
+            GROUP BY species ORDER BY species"
+  }
+  res <- DBI::dbGetQuery(con, sql)
+  if (nrow(res) == 0) return(setNames(character(0), character(0)))
+  lbl <- ifelse(res$n_strains > 1,
+    paste0(res$species, ' (', res$n_strains, ' strains)'),
+    res$species)
+  setNames(res$species, lbl)
+}
+
 qres_get_temp_range <- function(con) {
   res <- DBI::dbGetQuery(con, "SELECT MIN(temperature_c) AS tmin, MAX(temperature_c) AS tmax FROM plate")
   c(res$tmin, res$tmax)
