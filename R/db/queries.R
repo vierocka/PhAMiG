@@ -91,7 +91,9 @@ qres_search_datasets <- function(con, search = NULL) {
         coalesce(p.plate_reader,'')        || ' ' || coalesce(dc.perturbation_type,'') || ' ' ||
         coalesce(dc.perturbation,'')       || ' ' ||
         coalesce(CAST(p.temperature_c AS VARCHAR),'') || ' ' ||
-        coalesce(CAST(d.year AS VARCHAR),'')
+        coalesce(CAST(d.year AS VARCHAR),'') || ' ' ||
+        coalesce(rmr.signal_type, drr.signal_type, '') || ' ' ||
+        coalesce(rmr.measurement_unit, drr.measurement_unit, '')
       )"
   # For each token, build a LIKE clause on the full concat string.
   # For tokens that look like a genus name (>4 pure alpha chars), ALSO add

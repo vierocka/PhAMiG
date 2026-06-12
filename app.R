@@ -32,6 +32,10 @@ source('R/import/logphase_reader.R')
 source('R/import/keio_import.R')
 source('R/import/aida_import.R')
 source('R/import/baker_import.R')
+source('R/import/waithaka_import.R')
+source('R/import/taylorcrooks_import.R')
+source('R/import/tamminen_import.R')
+source('R/import/eisner_import.R')
 
 source('R/plugins/model_free.R')
 source('R/plugins/gcplyr.R')
@@ -1630,8 +1634,9 @@ server <- function(input, output, session) {
 
     # Capitalize first letter of each word without lowercasing first — preserves
     # multi-char initials like "BW" that tolower()+toTitleCase() would corrupt to "Bw"
-    if ('authors' %in% names(df))
-      df$authors <- gsub("\\b([a-z])", "\\U\\1", as.character(df$authors %||% ''), perl = TRUE)
+    # Guard nrow: %||% treats character(0) as NULL → returns '' (length 1) → crash on 0-row df
+    if (nrow(df) > 0 && 'authors' %in% names(df))
+      df$authors <- gsub("\\b([a-z])", "\\U\\1", df$authors, perl = TRUE)
 
     df
   })

@@ -105,10 +105,15 @@ waithaka_import_rbsr <- function(con, source_dir, overwrite = FALSE) {
     parsed$well_id  <- well_id_map[parsed$condition]
     parsed$well     <- well_name_map[parsed$condition]
 
-    # Write Parquet (standard time-series schema)
-    pq_path <- file.path(pq_dir, paste0(did, ".parquet"))
+    # Write Parquet — standard schema: dataset_id, plate_id, well_id, well, time_h, signal_type, value
+    plate_id <- paste0(did, "_p1")
+    pq_path  <- file.path(pq_dir, paste0(did, ".parquet"))
     if (overwrite && file.exists(pq_path)) file.remove(pq_path)
     pq_df <- parsed[, c("well_id", "well", "time_h", "value")]
+    pq_df$dataset_id  <- did
+    pq_df$plate_id    <- plate_id
+    pq_df$signal_type <- "cell_count"
+    pq_df <- pq_df[, c("dataset_id", "plate_id", "well_id", "well", "time_h", "signal_type", "value")]
     arrow::write_parquet(pq_df, pq_path)
     .wmsg("Parquet: ", pq_path, " (", nrow(pq_df), " rows, ", length(conditions), " wells)")
 
@@ -131,7 +136,6 @@ waithaka_import_rbsr <- function(con, source_dir, overwrite = FALSE) {
              "Conditions: Parent (wild-type control) and clones c2/c3/c4 ",
              "with and without tetracycline (tet) induction of the knockdown.")))
 
-    plate_id <- paste0(did, "_p1")
     DBI::dbExecute(con, "INSERT INTO plate (plate_id, dataset_id, plate_format, temperature_c)
       VALUES (?, ?, 'flask', 27.0)", list(plate_id, did))
 
