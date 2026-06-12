@@ -1,8 +1,9 @@
 # PhaMiG — PHenotypic Analysis of Microbial Growth
 
 A Shiny + DuckDB web application for storing, querying, and benchmarking microbial
-growth curve analyses. Covers bacteria and yeast. Built for antibiotic resistance
-research and honest cross-tool comparison of growth curve estimators.
+growth and phenotyping time-series data. Covers OD600, CFU/KFU, and fluorescence
+measurements. Built for antibiotic resistance research and honest cross-tool
+comparison of growth curve estimators.
 
 **Scientific value proposition:** Run model-free, gcplyr, growthrates, DGrowthR,
 KinBiont.jl, and omniplate on the *same* pre-processed raw data; query all results

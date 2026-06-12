@@ -165,7 +165,7 @@ ui_home <- fluidPage(
       ' Powered by Qres DB')),
 
     tags$p(class = 'home-tagline',
-      'Repository and benchmarking platform for quantitative microbial growth analysis.'),
+      'Repository and benchmarking platform for microbial growth and microbial phenotyping time-series data.'),
 
     tags$p(class = 'home-abbrev',
       tags$strong('PhaMiG'), HTML(' &ndash; Phenotypic Analysis of Microbial Growth'),
