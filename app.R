@@ -1524,9 +1524,9 @@ server <- function(input, output, session) {
       species  = DBI::dbGetQuery(con,
         "SELECT COUNT(DISTINCT w.species) AS n
          FROM well_metadata w
-         JOIN plate p USING(plate_id)
-         JOIN raw_measurement_registry rmr USING(dataset_id)
-         LEFT JOIN upload_embargo ue USING(dataset_id)
+         JOIN plate p ON p.plate_id = w.plate_id
+         JOIN raw_measurement_registry rmr ON rmr.dataset_id = p.dataset_id
+         LEFT JOIN upload_embargo ue ON ue.dataset_id = p.dataset_id
          WHERE w.species IS NOT NULL AND trim(w.species) != ''
            AND (ue.released = TRUE OR ue.dataset_id IS NULL)")$n,
       curves   = DBI::dbGetQuery(con,
@@ -4923,21 +4923,6 @@ server <- function(input, output, session) {
   )
 
   # ── Notes / submissions ────────────────────────────────────────────────────
-  observeEvent(input$init_db, {
-    updateSelectInput(session, 'note_dataset',
-      choices = c('general / not dataset-specific' = '',
-                  setNames(dataset_results()$dataset_id, dataset_results()$dataset_id)))
-  })
-
-  observeEvent(dataset_results(), {
-    df <- dataset_results()
-    if (nrow(df) > 0) {
-      updateSelectInput(session, 'note_dataset',
-        choices = c('general / not dataset-specific' = '',
-                    setNames(df$dataset_id, df$dataset_id)))
-    }
-  })
-
   observeEvent(input$submit_note, {
     req(nzchar(trimws(input$note_text %||% '')))
     note_id   <- paste0('note_', format(Sys.time(), '%Y%m%d%H%M%S'),
