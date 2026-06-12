@@ -185,6 +185,10 @@ qres_migrate_schema <- function(con) {
            error = function(e) NULL)
   # Embargo tables (added in session 3 — safe to run on older DBs)
   qres_init_schema(con)   # CREATE TABLE IF NOT EXISTS is idempotent
+  # Standardise Keio species name to match all other datasets and search filters
+  tryCatch(DBI::dbExecute(con,
+    "UPDATE well_metadata SET species = 'E. coli' WHERE species = 'Escherichia coli'"),
+    error = function(e) NULL)
   invisible(TRUE)
 }
 

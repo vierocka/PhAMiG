@@ -250,7 +250,7 @@ keio_import_all <- function(
            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
           params = list(
             well_id, plate_id, did, wlbl,
-            'Escherichia coli', '562',
+            'E. coli', '562',
             paste0('K-12 BW25113 Δ', ds$gene_name),
             'liquid',
             medium_long,
