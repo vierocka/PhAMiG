@@ -29,6 +29,7 @@ source('R/import/generic_csv.R')
 source('R/import/biotek.R')
 source('R/import/tecan.R')
 source('R/import/logphase_reader.R')
+source('R/import/keio_import.R')
 
 source('R/plugins/model_free.R')
 source('R/plugins/gcplyr.R')
@@ -736,6 +737,7 @@ ui_search <- fluidPage(
                 tabPanel('Links',
                   br(),
                   uiOutput('ncbi_link_box'),
+                  uiOutput('gene_links_box'),
                   uiOutput('doi_link_box')
                 ),
                 tabPanel('QC',
@@ -2296,6 +2298,44 @@ server <- function(input, output, session) {
     )
   })
 
+  # ── Gene-level links (UniProt, CGSC, KEGG) — shown for Keio datasets ────────
+  output$gene_links_box <- renderUI({
+    req(detail_dataset_id())
+    did <- detail_dataset_id()
+    if (!grepl('^keio_', did)) return(NULL)
+
+    # Extract JWID from dataset_id: keio_jw1950_lb → JW1950
+    parts <- strsplit(did, '_')[[1]]
+    jwid  <- toupper(parts[2])   # e.g. "JW1950"
+
+    # Gene name from well_metadata perturbation column
+    wm <- tryCatch(
+      DBI::dbGetQuery(con,
+        "SELECT DISTINCT perturbation, gene_category FROM well_metadata WHERE plate_id LIKE ? LIMIT 1",
+        params = list(paste0(did, '%'))),
+      error = function(e) NULL)
+    if (is.null(wm) || nrow(wm) == 0) return(NULL)
+
+    gene_name <- wm$perturbation[1]
+    cat_abbr  <- wm$gene_category[1]
+    cat_full  <- KEIO_CAT_LABELS[cat_abbr %||% ''] %||% cat_abbr %||% ''
+
+    tags$div(class = 'alert alert-info',
+      tags$strong('Gene resources: '),
+      tags$em(paste0('Δ', gene_name)), ' — ', jwid,
+      if (nzchar(cat_full %||% ''))
+        tags$span(style = 'color:#666; font-size:12px;',
+                  paste0(' | Category: ', cat_full, ' (', cat_abbr, ')')),
+      tags$br(),
+      tags$a(href = keio_uniprot_url(gene_name), target = '_blank',
+             'UniProt (E. coli K-12) ↗'), ' · ',
+      tags$a(href = keio_cgsc_url(jwid), target = '_blank',
+             paste0('CGSC / ECGRC ', jwid, ' ↗')), ' · ',
+      tags$a(href = keio_kegg_url(gene_name), target = '_blank',
+             'KEGG ECO ↗')
+    )
+  })
+
   # ── Publication search — default: show all on page load ───────────────────
   pub_results <- reactiveVal(NULL)  # NULL = not yet loaded; data.frame = results
 
@@ -3733,11 +3773,12 @@ server <- function(input, output, session) {
     else character(0)
     raw  <- qres_prepare_curves(raw, method = bm,
                                 blank_names = blank_names, blank_ids = blank_ids_db)
+    if (is.null(raw) || nrow(raw) == 0) return(raw)
     # Attach clean plate labels (sheet names or "Plate N") so the plot can
     # colour by plate even after the reactive result is cached by bindCache.
     lbls <- comp_plate_labels_rv()
     if ('plate_id' %in% names(raw)) {
-      mapped <- if (!is.null(lbls)) lbls[raw$plate_id] else NA_character_
+      mapped <- if (!is.null(lbls)) lbls[raw$plate_id] else rep(NA_character_, nrow(raw))
       raw$plate_label <- ifelse(is.na(mapped),
                                  sub('.*__plate_', 'Plate ', raw$plate_id),
                                  as.character(mapped))
