@@ -58,16 +58,18 @@ qres_init_schema <- function(con) {
   ")
 
   # ── raw_measurement_registry: where the Parquet files live ───────────────
-  # dataset_id FK → dataset; path = Parquet file path
+  # signal_type: OD600 | OD750 | fluorescence | luminescence | CFU | cell_count
+  # measurement_unit: OD | RFU | RLU | CFU/ml | cells/ml
   DBI::dbExecute(con, "
     CREATE TABLE IF NOT EXISTS raw_measurement_registry (
-      dataset_id   TEXT PRIMARY KEY,
-      storage_type TEXT,
-      path         TEXT,
-      n_rows       BIGINT,
-      n_wells      INTEGER,
-      signal_type  TEXT,
-      created_at   TIMESTAMP DEFAULT current_timestamp
+      dataset_id        TEXT PRIMARY KEY,
+      storage_type      TEXT,
+      path              TEXT,
+      n_rows            BIGINT,
+      n_wells           INTEGER,
+      signal_type       TEXT,
+      measurement_unit  TEXT,
+      created_at        TIMESTAMP DEFAULT current_timestamp
     )
   ")
 
@@ -166,17 +168,19 @@ qres_init_schema <- function(con) {
   # ── dose_response_registry: Parquet files for dose-response experiments ──────
   # Separate from raw_measurement_registry (which is time-series only).
   # Parquet schema: well, conc_ng_ml, value (blank-subtracted), value_raw.
+  # signal_type / measurement_unit follow the same vocabulary as raw_measurement_registry.
   DBI::dbExecute(con, "
     CREATE TABLE IF NOT EXISTS dose_response_registry (
-      dataset_id   TEXT NOT NULL,
-      storage_type TEXT DEFAULT 'parquet',
-      path         TEXT,
-      compound     TEXT,
-      conc_unit    TEXT,
-      signal_type  TEXT,
-      n_wells      INTEGER,
-      n_conc       INTEGER,
-      created_at   TIMESTAMP DEFAULT current_timestamp
+      dataset_id        TEXT NOT NULL,
+      storage_type      TEXT DEFAULT 'parquet',
+      path              TEXT,
+      compound          TEXT,
+      conc_unit         TEXT,
+      signal_type       TEXT,
+      measurement_unit  TEXT,
+      n_wells           INTEGER,
+      n_conc            INTEGER,
+      created_at        TIMESTAMP DEFAULT current_timestamp
     )
   ")
   tryCatch(DBI::dbExecute(con,
@@ -249,6 +253,27 @@ qres_migrate_schema <- function(con) {
            error = function(e) NULL)
   tryCatch(DBI::dbExecute(con, "ALTER TABLE processing_run ADD COLUMN IF NOT EXISTS git_commit TEXT"),
            error = function(e) NULL)
+  # Add measurement_unit to registry tables (added after initial release)
+  tryCatch(DBI::dbExecute(con,
+    "ALTER TABLE raw_measurement_registry ADD COLUMN IF NOT EXISTS measurement_unit TEXT"),
+    error = function(e) NULL)
+  tryCatch(DBI::dbExecute(con,
+    "ALTER TABLE dose_response_registry ADD COLUMN IF NOT EXISTS measurement_unit TEXT"),
+    error = function(e) NULL)
+  # Auto-populate measurement_unit from signal_type for existing records
+  for (upd in list(
+    list("raw_measurement_registry", "OD600",        "OD"),
+    list("raw_measurement_registry", "OD750",        "OD"),
+    list("raw_measurement_registry", "fluorescence", "RFU"),
+    list("raw_measurement_registry", "luminescence", "RLU"),
+    list("raw_measurement_registry", "CFU",          "CFU/ml"),
+    list("raw_measurement_registry", "cell_count",   "cells/ml"),
+    list("dose_response_registry",   "fluorescence", "RFU"),
+    list("dose_response_registry",   "luminescence", "RLU")
+  )) tryCatch(DBI::dbExecute(con, sprintf(
+    "UPDATE %s SET measurement_unit = '%s' WHERE signal_type = '%s' AND measurement_unit IS NULL",
+    upd[[1]], upd[[3]], upd[[2]])), error = function(e) NULL)
+
   # Embargo tables (added in session 3 — safe to run on older DBs)
   qres_init_schema(con)   # CREATE TABLE IF NOT EXISTS is idempotent
   # Standardise Keio species name to match all other datasets and search filters

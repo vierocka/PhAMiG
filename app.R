@@ -707,10 +707,21 @@ ui_search <- fluidPage(
               tags$span(class = 'adv-group-label', 'Experimental'),
               textInput('adv_plate_reader', 'Plate reader', placeholder = 'e.g. Biotek', width = '100%'),
               selectInput('adv_signal_type', 'Measurement type',
-                choices = c('(all)' = '',
-                            'OD600 (absorbance)' = 'OD600',
-                            'Cell count (CFU / KFU)' = 'cell_count',
-                            'Fluorescence (RFU)' = 'fluorescence'),
+                choices = c('(all)'                       = '',
+                            'OD600 (absorbance at 600 nm)' = 'OD600',
+                            'OD750 (absorbance at 750 nm)' = 'OD750',
+                            'Fluorescence intensity (RFU)'  = 'fluorescence',
+                            'Luminescence (RLU)'            = 'luminescence',
+                            'Viable cells (CFU/mL)'         = 'CFU',
+                            'Cell count (cells/mL)'         = 'cell_count'),
+                width = '100%'),
+              selectInput('adv_measurement_unit', 'Measurement unit',
+                choices = c('(all)'    = '',
+                            'OD'       = 'OD',
+                            'RFU'      = 'RFU',
+                            'RLU'      = 'RLU',
+                            'CFU/ml'   = 'CFU/ml',
+                            'cells/ml' = 'cells/ml'),
                 width = '100%'),
               tags$hr(style = 'margin:4px 0;'),
               tags$span(class = 'adv-group-label', 'Publication'),
@@ -1597,6 +1608,9 @@ server <- function(input, output, session) {
     st_sel <- input$adv_signal_type %||% ''
     if (nzchar(st_sel) && 'signal_type' %in% names(df))
       df <- df[!is.na(df$signal_type) & df$signal_type == st_sel, ]
+    mu_sel <- input$adv_measurement_unit %||% ''
+    if (nzchar(mu_sel) && 'measurement_unit' %in% names(df))
+      df <- df[!is.na(df$measurement_unit) & df$measurement_unit == mu_sel, ]
     df <- .txt(df, 'authors',           input$adv_author)
     df <- .txt(df, 'doi',               input$adv_doi)
 
@@ -1712,7 +1726,7 @@ server <- function(input, output, session) {
     adv_active <- any(nzchar(c(
       input$adv_species %||% '', input$adv_strain %||% '', input$adv_medium %||% '',
       input$adv_perturb %||% '', input$adv_author %||% '', input$adv_doi %||% '',
-      input$adv_signal_type %||% ''
+      input$adv_signal_type %||% '', input$adv_measurement_unit %||% ''
     ))) || !is.na(input$adv_temp_min) || !is.na(input$adv_temp_max) ||
            nzchar(input$adv_perturb_type %||% '')
 
@@ -1734,10 +1748,18 @@ server <- function(input, output, session) {
     types_present <- sort(unique(na.omit(df$signal_type)))
     if (length(types_present) == 0) return(NULL)
 
-    clr <- c(OD600 = 'rgba(91,155,213,0.22)', cell_count = 'rgba(112,173,71,0.22)',
-             fluorescence = 'rgba(180,100,200,0.22)')
-    lbl <- c(OD600 = 'OD600 (absorbance)', cell_count = 'Cell count (CFU/KFU)',
-             fluorescence = 'Fluorescence (RFU)')
+    clr <- c(OD600        = 'rgba(91,155,213,0.22)',
+             OD750        = 'rgba(51,120,190,0.22)',
+             fluorescence = 'rgba(180,100,200,0.22)',
+             luminescence = 'rgba(240,160,30,0.22)',
+             CFU          = 'rgba(112,173,71,0.22)',
+             cell_count   = 'rgba(60,140,50,0.22)')
+    lbl <- c(OD600        = 'OD600 (absorbance)',
+             OD750        = 'OD750 (absorbance)',
+             fluorescence = 'Fluorescence (RFU)',
+             luminescence = 'Luminescence (RLU)',
+             CFU          = 'Viable cells (CFU/mL)',
+             cell_count   = 'Cell count (cells/mL)')
 
     chips <- lapply(types_present, function(st) {
       bg  <- clr[[st]] %||% 'rgba(180,180,180,0.22)'
@@ -1864,11 +1886,23 @@ server <- function(input, output, session) {
     }
 
     .signal_label <- function(st) {
-      dplyr::case_match(st,
-        'OD600'        ~ 'OD600 (absorbance)',
-        'cell_count'   ~ 'Cell count (CFU/KFU)',
-        'fluorescence' ~ 'Fluorescence (RFU)',
-        .default       = st)
+      vapply(as.character(st), function(x) switch(x,
+        'OD600'        = 'OD600 (absorbance)',
+        'OD750'        = 'OD750 (absorbance)',
+        'fluorescence' = 'Fluorescence (RFU)',
+        'luminescence' = 'Luminescence (RLU)',
+        'CFU'          = 'Viable cells (CFU/mL)',
+        'cell_count'   = 'Cell count (cells/mL)',
+        x), character(1L))
+    }
+    .unit_label <- function(u) {
+      vapply(as.character(u), function(x) switch(x,
+        'OD'       = 'OD (absorbance)',
+        'RFU'      = 'RFU — fluorescence',
+        'RLU'      = 'RLU — luminescence',
+        'CFU/ml'   = 'CFU/mL — viable cells',
+        'cells/ml' = 'cells/mL — cell count',
+        x), character(1L))
     }
 
     tags$div(class = 'facet-panel',
@@ -1876,6 +1910,8 @@ server <- function(input, output, session) {
       .block_perturbation(df),
       if ('signal_type' %in% names(df) && any(!is.na(df$signal_type)))
         .block('Measurement type', .signal_label(df$signal_type)),
+      if ('measurement_unit' %in% names(df) && any(!is.na(df$measurement_unit)))
+        .block('Unit',             .unit_label(df$measurement_unit)),
       .block('Temperature',      paste0(df$temperature_c, '°C')),
       .block('Medium',           df$medium_type)
     )
@@ -1910,7 +1946,8 @@ server <- function(input, output, session) {
     updateSelectInput(session,  'adv_perturb_type',  selected = '')
     updateTextInput(session,    'adv_perturb',       value = '')
     updateTextInput(session,    'adv_plate_reader',  value = '')
-    updateSelectInput(session,  'adv_signal_type',   selected = '')
+    updateSelectInput(session,  'adv_signal_type',      selected = '')
+    updateSelectInput(session,  'adv_measurement_unit', selected = '')
     updateTextInput(session,    'adv_author',       value = '')
     updateNumericInput(session, 'adv_year_min',     value = NA)
     updateNumericInput(session, 'adv_year_max',     value = NA)
@@ -2043,7 +2080,8 @@ server <- function(input, output, session) {
     # Column order: most useful first, verbose last
     col_order <- c('dataset_id', 'species', 'strain', 'temperature_c',
                    'perturbation_type', 'perturbation', 'medium_type',
-                   'signal_type', 'year', 'authors', 'has_raw', 'doi', 'raw_file', 'plate_reader')
+                   'signal_type', 'measurement_unit',
+                   'year', 'authors', 'has_raw', 'doi', 'raw_file', 'plate_reader')
     display <- display[, intersect(col_order, names(display)), drop = FALSE]
 
     # Columns hidden by default (accessible via column visibility button)
@@ -2055,9 +2093,15 @@ server <- function(input, output, session) {
       DT::JS(sprintf(
         "function(row, data) {
            var st = data[%d];
-           if      (st === 'OD600')        $(row).css('background-color','rgba(91,155,213,0.13)');
-           else if (st === 'cell_count')   $(row).css('background-color','rgba(112,173,71,0.13)');
-           else if (st === 'fluorescence') $(row).css('background-color','rgba(180,100,200,0.13)');
+           var bg = {
+             'OD600':        'rgba(91,155,213,0.13)',
+             'OD750':        'rgba(51,120,190,0.13)',
+             'fluorescence': 'rgba(180,100,200,0.13)',
+             'luminescence': 'rgba(240,160,30,0.13)',
+             'CFU':          'rgba(112,173,71,0.13)',
+             'cell_count':   'rgba(60,140,50,0.13)'
+           }[st];
+           if (bg) $(row).css('background-color', bg);
          }", st_col))
     } else NULL
 
@@ -2075,6 +2119,7 @@ server <- function(input, output, session) {
         list(width = '55px',  targets = which(names(display) == 'temperature_c') - 1L),
         list(width = '110px', targets = which(names(display) == 'perturbation_type') - 1L),
         list(width = '100px', targets = which(names(display) == 'signal_type') - 1L),
+        list(width = '80px',  targets = which(names(display) == 'measurement_unit') - 1L),
         list(width = '130px', targets = which(names(display) %in% c('medium_type','authors')) - 1L),
         list(className = 'dt-center', targets = '_all')
       )

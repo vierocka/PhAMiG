@@ -61,7 +61,8 @@ qres_search_datasets <- function(con, search = NULL) {
            p.temperature_c, d.doi, d.year, d.authors, d.raw_file,
            p.plate_reader,
            CASE WHEN rmr.path IS NOT NULL THEN 1 ELSE 0 END AS has_raw,
-           COALESCE(rmr.signal_type, drr.signal_type) AS signal_type
+           COALESCE(rmr.signal_type,      drr.signal_type)      AS signal_type,
+           COALESCE(rmr.measurement_unit, drr.measurement_unit) AS measurement_unit
     FROM dataset d
     LEFT JOIN plate p USING(dataset_id)
     LEFT JOIN dataset_conditions dc USING(dataset_id)

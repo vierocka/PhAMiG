@@ -161,8 +161,8 @@ waithaka_import_rbsr <- function(con, source_dir, overwrite = FALSE) {
     }
 
     DBI::dbExecute(con, "INSERT INTO raw_measurement_registry
-      (dataset_id, storage_type, path, n_rows, n_wells, signal_type)
-      VALUES (?, 'parquet', ?, ?, ?, 'cell_count')",
+      (dataset_id, storage_type, path, n_rows, n_wells, signal_type, measurement_unit)
+      VALUES (?, 'parquet', ?, ?, ?, 'cell_count', 'cells/ml')",
       list(did, pq_path, nrow(pq_df), length(conditions)))
 
     tryCatch(qres_sync_conditions(con, did), error = function(e) NULL)
@@ -342,8 +342,8 @@ waithaka_import_rbsr <- function(con, source_dir, overwrite = FALSE) {
     VALUES (?, ?, '96-well', 27.0)", list(paste0(did, "_p1"), did))
 
   DBI::dbExecute(con, "INSERT INTO dose_response_registry
-    (dataset_id, storage_type, path, compound, conc_unit, signal_type, n_wells, n_conc)
-    VALUES (?, 'parquet', ?, ?, 'ng/mL', 'fluorescence', ?, ?)",
+    (dataset_id, storage_type, path, compound, conc_unit, signal_type, measurement_unit, n_wells, n_conc)
+    VALUES (?, 'parquet', ?, ?, 'ng/mL', 'fluorescence', 'RFU', ?, ?)",
     list(did, pq_path, compound, n_wells, n_conc))
 }
 
