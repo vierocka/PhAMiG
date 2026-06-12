@@ -30,6 +30,8 @@ source('R/import/biotek.R')
 source('R/import/tecan.R')
 source('R/import/logphase_reader.R')
 source('R/import/keio_import.R')
+source('R/import/aida_import.R')
+source('R/import/baker_import.R')
 
 source('R/plugins/model_free.R')
 source('R/plugins/gcplyr.R')
@@ -738,10 +740,12 @@ ui_search <- fluidPage(
                   br(),
                   uiOutput('ncbi_link_box'),
                   uiOutput('gene_links_box'),
+                  uiOutput('medium_comp_box'),
                   uiOutput('doi_link_box')
                 ),
                 tabPanel('QC',
                   br(),
+                  uiOutput('qc_unavailable_msg'),
                   plotOutput('qc_cv_plot',      height = '260px'),
                   br(),
                   plotOutput('qc_heatmap_plot', height = '260px')
@@ -1600,9 +1604,10 @@ server <- function(input, output, session) {
     if (!is.na(y_hi) && 'year' %in% names(df))
       df <- df[!is.na(df$year) & df$year <= y_hi, ]
 
-    # Normalize author display: "SMITH, J." → "Smith, J." regardless of how they were uploaded
+    # Capitalize first letter of each word without lowercasing first — preserves
+    # multi-char initials like "BW" that tolower()+toTitleCase() would corrupt to "Bw"
     if ('authors' %in% names(df))
-      df$authors <- tools::toTitleCase(tolower(as.character(df$authors %||% '')))
+      df$authors <- gsub("\\b([a-z])", "\\U\\1", as.character(df$authors %||% ''), perl = TRUE)
 
     df
   })
@@ -2329,11 +2334,74 @@ server <- function(input, output, session) {
       tags$br(),
       tags$a(href = keio_uniprot_url(gene_name), target = '_blank',
              'UniProt (E. coli K-12) ↗'), ' · ',
-      tags$a(href = keio_cgsc_url(jwid), target = '_blank',
-             paste0('CGSC / ECGRC ', jwid, ' ↗')), ' · ',
       tags$a(href = keio_kegg_url(gene_name), target = '_blank',
              'KEGG ECO ↗')
     )
+  })
+
+  # ── Medium composition table — shown for chemically defined media datasets ───
+  output$medium_comp_box <- renderUI({
+    req(detail_dataset_id())
+    did <- detail_dataset_id()
+    if (!grepl('^aida_', did)) return(NULL)
+
+    mc <- tryCatch(
+      DBI::dbGetQuery(con,
+        "SELECT compound, conc_mm, conc_base_mm, is_stressor, is_buffer_adj
+         FROM medium_composition WHERE dataset_id = ?
+         ORDER BY is_stressor DESC, is_buffer_adj DESC, compound",
+        params = list(did)),
+      error = function(e) NULL)
+    if (is.null(mc) || nrow(mc) == 0) return(NULL)
+
+    # Keep only compounds present (> 0) in base or test
+    mc <- mc[!is.na(mc$conc_mm) & (mc$conc_mm > 0 | mc$conc_base_mm > 0), ]
+    if (nrow(mc) == 0) return(NULL)
+
+    mc$Role <- ifelse(mc$is_stressor,   'stressor',
+               ifelse(mc$is_buffer_adj, 'buffer adj.', ''))
+    mc$conc_base_mm <- round(mc$conc_base_mm, 4)
+    mc$conc_mm      <- round(mc$conc_mm, 4)
+
+    tags$div(class = 'alert alert-success', style = 'padding-bottom:6px;',
+      tags$strong('Medium composition'),
+      tags$span(style = 'color:#555; font-size:12px; margin-left:8px;',
+                '(base pattern vs. this condition)'),
+      tags$br(), tags$br(),
+      DT::dataTableOutput(paste0('mc_dt_', did))
+    )
+  })
+
+  observeEvent(detail_dataset_id(), {
+    did <- detail_dataset_id()
+    if (is.null(did) || !grepl('^aida_', did)) return()
+    mc <- tryCatch(
+      DBI::dbGetQuery(con,
+        "SELECT compound, conc_mm, conc_base_mm, is_stressor, is_buffer_adj
+         FROM medium_composition WHERE dataset_id = ?
+         ORDER BY is_stressor DESC, is_buffer_adj DESC, compound",
+        params = list(did)),
+      error = function(e) NULL)
+    if (is.null(mc) || nrow(mc) == 0) return()
+    mc <- mc[!is.na(mc$conc_mm) & (mc$conc_mm > 0 | mc$conc_base_mm > 0), ]
+    mc$Role <- ifelse(mc$is_stressor,   'stressor',
+               ifelse(mc$is_buffer_adj, 'buffer adj.', ''))
+    mc$conc_base_mm <- round(mc$conc_base_mm, 4)
+    mc$conc_mm      <- round(mc$conc_mm, 4)
+    output[[paste0('mc_dt_', did)]] <- DT::renderDataTable({
+      DT::datatable(
+        mc[, c('compound','conc_base_mm','conc_mm','Role')],
+        colnames  = c('Compound', 'Base (mM)', 'This condition (mM)', 'Role'),
+        rownames  = FALSE,
+        options   = list(pageLength = 15, dom = 'tp', scrollX = TRUE),
+        selection = 'none'
+      ) |>
+        DT::formatStyle('Role',
+          target = 'row',
+          backgroundColor = DT::styleEqual(
+            c('stressor', 'buffer adj.'),
+            c('#fff3cd',  '#e8f4f8')))
+    })
   })
 
   # ── Publication search — default: show all on page load ───────────────────
@@ -2440,14 +2508,92 @@ server <- function(input, output, session) {
   })
 
   # ── QC plots ───────────────────────────────────────────────────────────────
+  # Both plots require standard plate-format wells (rows A–P, cols 1–24, ≥4 wells).
+  # Non-plate uploads (e.g. 3-replicate gene knockouts) produce meaningless CV spikes
+  # and empty heatmaps, so both are suppressed for such datasets.
+  .has_plate_wells <- function(dat, min_wells = 4L) {
+    if (is.null(dat) || nrow(dat) == 0L) return(FALSE)
+    wells <- unique(as.character(dat$well))
+    sum(grepl("^[A-Pa-p]([1-9]|1[0-9]|2[0-4])$", wells)) >= min_wells
+  }
+
+  output$qc_unavailable_msg <- renderUI({
+    dat <- raw_long()
+    req(dat, nrow(dat) > 0)
+
+    # Fetch plate and dataset metadata once
+    meta <- tryCatch(
+      DBI::dbGetQuery(con,
+        "SELECT d.raw_file, d.source_url, d.notes,
+                p.plate_format, p.spectrophotometer
+         FROM dataset d
+         LEFT JOIN plate p USING(dataset_id)
+         WHERE d.dataset_id = ?",
+        params = list(detail_dataset_id())),
+      error = function(e) NULL)
+
+    plate_fmt  <- tolower(meta$plate_format[1]  %||% '')
+    spectro    <- tolower(meta$spectrophotometer[1] %||% '')
+    src        <- meta$source_url[1] %||% ''
+    raw_ext    <- tolower(tools::file_ext(meta$raw_file[1] %||% ''))
+
+    # Is the vessel a standard microplate?
+    is_microplate <- grepl('well|plate|96|384|48|24|12|6\\s*-?well', plate_fmt) ||
+                     (nzchar(plate_fmt) && !grepl('flask|tube|cuvette|vial|bottle', plate_fmt))
+    # Was it recorded by a plate reader (automated, consistent well addresses)?
+    is_plate_reader <- grepl('epoch|synergy|tecan|biotek|spectramax|varioskan|victor|infinite|clariostar|spark',
+                              plate_fmt %||% spectro)
+
+    repo <- if (grepl('figshare', src)) 'Figshare'
+            else if (grepl('zenodo', src)) 'Zenodo'
+            else if (grepl('doi\\.org', src)) 'the data repository'
+            else NULL
+    fmt_label <- switch(raw_ext, xlsx = 'XLSX', xls = 'XLS', csv = 'CSV', 'tabular')
+
+    if (!.has_plate_wells(dat)) {
+      # ── No plate-format well names at all ──────────────────────────────────
+      repo_str <- if (!is.null(repo)) paste0(' (', repo, ')') else ''
+      tags$div(
+        class = 'alert alert-info', role = 'alert',
+        tags$b('QC plots not available. '),
+        sprintf(
+          'The raw data were originally deposited in %s format%s without a
+           standard microplate well layout. Measurements were recorded per sample,
+           not per plate position. CV and endpoint heatmap require plate-reader
+           output with A1–H12 well coordinates.',
+          fmt_label, repo_str)
+      )
+    } else if (!is_microplate || grepl('flask|tube|cuvette|vial|bottle', plate_fmt)) {
+      # ── Data have plate-like well labels but were not measured in a microplate ─
+      vessel <- if (nzchar(plate_fmt)) plate_fmt else 'individual vessels (flasks or tubes)'
+      instr  <- if (!is.null(repo))
+        paste0(' Original data: <a href="', src, '" target="_blank">', repo, '</a>.') else ''
+      tags$div(
+        class = 'alert alert-warning', role = 'alert',
+        tags$b('⚠ QC plots may be misleading. '),
+        HTML(sprintf(
+          'Growth was measured in %s, not in a microplate. Well labels
+           (A1, B1…) are assigned per strain group, not spatial plate
+           positions. The CV plot reflects biological variation <em>between
+           strains</em>, not technical replicate agreement within a single
+           condition. The endpoint heatmap shows relative yield per strain
+           group rather than a spatial plate map.%s',
+          vessel, instr))
+      )
+    }
+    # else: standard microplate data — no message needed
+  })
+
   output$qc_cv_plot <- renderPlot({
-    req(raw_long())
-    qres_plot_qc_cv(raw_long())
+    dat <- raw_long()
+    req(dat, .has_plate_wells(dat))
+    qres_plot_qc_cv(dat)
   })
 
   output$qc_heatmap_plot <- renderPlot({
-    req(raw_long())
-    qres_plot_endpoint_heatmap(raw_long())
+    dat <- raw_long()
+    req(dat, .has_plate_wells(dat))
+    qres_plot_endpoint_heatmap(dat)
   })
 
   # ── Analyse page — mode panel ─────────────────────────────────────────────
@@ -3605,7 +3751,7 @@ server <- function(input, output, session) {
 
     raw_list <- lapply(db_ids, function(did) {
       raw <- tryCatch(qres_get_raw_curves(con, did), error = function(e) NULL)
-      if (!is.null(raw)) raw$plot_label <- .label(did)
+      if (!is.null(raw) && nrow(raw) > 0) raw$plot_label <- .label(did)
       raw
     })
 
@@ -3615,7 +3761,7 @@ server <- function(input, output, session) {
       reps     <- comp_replicates_rv()
       if (agg_mode == 'agg_before' && length(reps) > 0)
         raw_up <- .agg_replicates_before(raw_up, reps)
-      raw_up$plot_label <- 'Uploaded data'
+      if (nrow(raw_up) > 0) raw_up$plot_label <- 'Uploaded data'
       raw_list <- c(raw_list, list(raw_up))
     }
 

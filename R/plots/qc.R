@@ -5,7 +5,7 @@ qres_plot_qc_cv <- function(raw_long) {
   requireNamespace('dplyr')
 
   cv_df <- raw_long |>
-    dplyr::group_by(dataset_id, time_h) |>
+    dplyr::group_by(time_h) |>
     dplyr::summarise(
       mean_od = mean(value, na.rm = TRUE),
       sd_od   = sd(value,   na.rm = TRUE),

@@ -9,9 +9,10 @@
 # ─── Known vocabulary ────────────────────────────────────────────────────────
 
 .NL_SPECIES <- list(
-  'E. coli'             = c('e\\.?\\s*coli', 'escherichia coli', 'ecoli'),
-  'S. cerevisiae'       = c('s\\.?\\s*cerevisiae', 'saccharomyces cerevisiae', 'yeast', 'baker.s yeast'),
-  'B. subtilis'         = c('b\\.?\\s*subtilis', 'bacillus subtilis'),
+  'E. coli'             = c('e\\.?\\s*coli', 'escherichia\\s*(coli)?', 'ecoli'),
+  'M. tuberculosis'     = c('m\\.?\\s*tuberculosis', 'mycobacterium(\\s+tuberculosis)?', '\\bmtb\\b', 'm\\.?tb'),
+  'S. cerevisiae'       = c('s\\.?\\s*cerevisiae', 'saccharomyces(\\s+cerevisiae)?', 'yeast', 'baker.s yeast'),
+  'B. subtilis'         = c('b\\.?\\s*subtilis', 'bacillus(\\s+subtilis)?'),
   'S. typhimurium'      = c('salmonella', 's\\.?\\s*typhimurium'),
   'K. pneumoniae'       = c('klebsiella', 'k\\.?\\s*pneumoniae'),
   'P. aeruginosa'       = c('pseudomonas', 'p\\.?\\s*aeruginosa'),

@@ -1,3 +1,25 @@
+# Generates a SQL OR clause that matches species in both abbreviated and full-binomial
+# forms without requiring a lookup table:
+#   c1: direct LIKE (e.g. stored 'E. coli', search 'E. coli')
+#   c2: computed abbreviation from stored full name (e.g. stored 'Escherichia coli', search 'E. coli')
+#   c3: abbreviated form of the search term, when term is a full binomial
+#       (e.g. stored 'E. coli', search 'Escherichia coli')
+.species_sql_clause <- function(term, col = "coalesce(w.species,'')") {
+  safe   <- qres_sql_safe(tolower(trimws(term)))
+  c1     <- sprintf("lower(%s) LIKE lower('%%%s%%')", col, safe)
+  a_col  <- sprintf(
+    "lower(substr(%s,1,1)||'. '||trim(substr(%s,instr(%s,' ')+1)))", col, col, col)
+  c2     <- sprintf("%s LIKE lower('%%%s%%')", a_col, safe)
+  parts  <- strsplit(trimws(term), "\\s+")[[1]]
+  clauses <- c(c1, c2)
+  if (length(parts) >= 2 && nchar(parts[1]) > 2 && grepl("^[A-Za-z]", parts[1])) {
+    abbrev <- qres_sql_safe(tolower(paste0(substr(parts[1],1,1), '. ',
+                                            paste(parts[-1], collapse = ' '))))
+    clauses <- c(clauses, sprintf("lower(%s) LIKE lower('%%%s%%')", col, abbrev))
+  }
+  paste0('(', paste(clauses, collapse = ' OR '), ')')
+}
+
 qres_search_datasets <- function(con, search = NULL) {
   requireNamespace('DBI')
 
@@ -25,20 +47,43 @@ qres_search_datasets <- function(con, search = NULL) {
     return(DBI::dbGetQuery(con, paste(base_sql, "ORDER BY p.temperature_c")))
   }
 
-  pattern <- paste0('%', tolower(trimws(qres_sql_safe(search))), '%')
-  DBI::dbGetQuery(con,
-    paste0(base_sql, "
-      AND lower(
+  # Split into tokens — each token must appear independently (AND logic).
+  # This lets "E. coli glucose" find datasets where species=E.coli AND perturbation=Glucose,
+  # even though those fields are not adjacent in the concatenated search string.
+  tokens <- strsplit(tolower(trimws(search)), "\\s+")[[1]]
+  tokens <- tokens[nzchar(tokens)]
+  tokens <- vapply(tokens, qres_sql_safe, character(1L))
+
+  search_expr <- "lower(
         coalesce(d.title,'')              || ' ' || coalesce(d.doi,'')           || ' ' ||
         coalesce(d.authors,'')            || ' ' || coalesce(w.species,'')       || ' ' ||
+        coalesce(substr(w.species,1,1)||'. '||trim(substr(w.species,instr(w.species,' ')+1)),'') || ' ' ||
         coalesce(w.strain,'')             || ' ' || coalesce(w.medium_type,'')   || ' ' ||
         coalesce(p.plate_reader,'')       || ' ' || coalesce(w.perturbation_type,'') || ' ' ||
         coalesce(w.perturbation,'')       || ' ' ||
         coalesce(CAST(p.temperature_c AS VARCHAR),'') || ' ' ||
         coalesce(CAST(d.year AS VARCHAR),'')
-      ) LIKE ?
-      ORDER BY p.temperature_c"),
-    params = list(pattern)
+      )"
+  # For each token, build a LIKE clause on the full concat string.
+  # For tokens that look like a genus name (>4 pure alpha chars), ALSO add
+  # a fallback matching abbreviated species like "M. tuberculosis" when the
+  # user types "Mycobacterium", or "E. coli" when they type "Escherichia".
+  make_token_clause <- function(tok) {
+    base <- sprintf("%s LIKE '%%%s%%'", search_expr, tok)
+    if (grepl("^[a-z]{5,}$", tok)) {
+      fl <- substr(tok, 1L, 1L)
+      genus_clause <- sprintf("lower(coalesce(w.species,'')) LIKE '%s.%%'", fl)
+      paste0("(", base, " OR ", genus_clause, ")")
+    } else {
+      paste0("(", base, ")")
+    }
+  }
+  token_clauses <- paste(
+    vapply(tokens, make_token_clause, character(1L)),
+    collapse = " AND ")
+
+  DBI::dbGetQuery(con,
+    paste0(base_sql, " AND ", token_clauses, " ORDER BY p.temperature_c")
   )
 }
 
@@ -125,9 +170,10 @@ qres_get_distinct_authors <- function(con) {
 }
 
 qres_get_distinct_strains <- function(con, species) {
+  clause <- .species_sql_clause(species, col = "coalesce(species,'')")
   res <- DBI::dbGetQuery(con,
-    "SELECT DISTINCT strain FROM well_metadata WHERE lower(species) = lower(?) AND strain IS NOT NULL ORDER BY strain",
-    params = list(species))
+    sprintf("SELECT DISTINCT strain FROM well_metadata WHERE %s AND strain IS NOT NULL ORDER BY strain",
+            clause))
   trimws(res$strain[nzchar(trimws(res$strain))])
 }
 
@@ -152,8 +198,7 @@ qres_filter_datasets <- function(con, species = NULL, strain = NULL,
   clauses <- character(0)
 
   if (!is.null(species) && nzchar(species)) {
-    clauses <- c(clauses, sprintf(
-      "lower(coalesce(w.species,'')) LIKE lower('%%%s%%')", qres_sql_safe(species)))
+    clauses <- c(clauses, .species_sql_clause(species))
   }
   if (!is.null(strain) && nzchar(strain)) {
     clauses <- c(clauses, sprintf(

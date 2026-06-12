@@ -117,6 +117,23 @@ qres_init_schema <- function(con) {
     )
   ")
 
+  # ── medium_composition: per-compound concentrations for chemically defined media ──
+  # Populated by import scripts (e.g. Aida 2025 CDM dataset).
+  # conc_mm      = concentration in this condition (mM)
+  # conc_base_mm = concentration in the round's base pattern (mM) — for comparison
+  # is_stressor  = TRUE for the compound being experimentally varied
+  # is_buffer_adj= TRUE for pH-buffer compounds that co-vary with the stressor (e.g. KH2PO4)
+  DBI::dbExecute(con, "
+    CREATE TABLE IF NOT EXISTS medium_composition (
+      dataset_id    TEXT NOT NULL,
+      compound      TEXT NOT NULL,
+      conc_mm       DOUBLE,
+      conc_base_mm  DOUBLE,
+      is_stressor   BOOLEAN DEFAULT FALSE,
+      is_buffer_adj BOOLEAN DEFAULT FALSE
+    )
+  ")
+
   # ── user_note: bug reports, observations, feature requests ───────────────
   DBI::dbExecute(con, "
     CREATE TABLE IF NOT EXISTS user_note (
@@ -193,8 +210,8 @@ qres_migrate_schema <- function(con) {
 }
 
 qres_reset_tables <- function(con) {
-  tbls <- c('user_note', 'model_fit', 'derived_metric', 'processing_run',
-            'raw_measurement_registry', 'well_metadata', 'plate', 'dataset')
+  tbls <- c('medium_composition', 'user_note', 'model_fit', 'derived_metric',
+            'processing_run', 'raw_measurement_registry', 'well_metadata', 'plate', 'dataset')
   for (t in tbls)
     tryCatch(DBI::dbExecute(con, paste('DROP TABLE IF EXISTS', t)), error = function(e) NULL)
   qres_init_schema(con)

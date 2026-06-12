@@ -456,11 +456,6 @@ keio_uniprot_url <- function(gene_name) {
 # CGSC/ECGRC — strain page by JWID number (strip leading zeros after "JW")
 # URL pattern: https://ecgrc.net/CGSC/Strain.php?ID=<number>
 # Verify the URL format at https://ecgrc.net/CGSC/index.php if it changes.
-keio_cgsc_url <- function(jwid) {
-  num <- as.integer(sub('^JW0*', '', toupper(trimws(jwid))))
-  paste0('https://ecgrc.net/CGSC/Strain.php?ID=', num)
-}
-
 # KEGG E. coli gene entry — reliable fallback
 keio_kegg_url <- function(gene_name) {
   paste0('https://www.genome.jp/dbget-bin/www_bget?eco:', gene_name)
