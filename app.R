@@ -1613,23 +1613,27 @@ server <- function(input, output, session) {
   })
 
   # ── Auto-load on startup — populate filter dropdowns and search results ──────
+  # Deferred via later::later(0): lets Shiny flush the initial UI to the browser
+  # before running the blocking DB queries, so the home page appears immediately.
   session$onFlushed(function() {
-    rows <- tryCatch({
-      qres_migrate_schema(con)
-      qres_search_datasets(con)
-    }, error = function(e) data.frame())
-    if (nrow(rows) > 0) dataset_results(rows)
-    # Populate Analyse page filter dropdowns
-    tryCatch({
-      updateSelectizeInput(session, 'comp_author',
-                           choices = c('(none)' = '', qres_get_distinct_authors(con)),
-                           server  = TRUE)
-      updateSelectizeInput(session, 'comp_species',
-                           choices = c('' , qres_get_species_with_counts(con)), server = TRUE)
-      updateSelectizeInput(session, 'comp_perturb_type',
-                           choices = c('', qres_get_distinct_perturbation_types(con)),
-                           server = TRUE)
-    }, error = function(e) NULL)
+    later::later(function() {
+      rows <- tryCatch({
+        qres_migrate_schema(con)
+        qres_search_datasets(con)
+      }, error = function(e) data.frame())
+      if (nrow(rows) > 0) dataset_results(rows)
+      # Populate Analyse page filter dropdowns
+      tryCatch({
+        updateSelectizeInput(session, 'comp_author',
+                             choices = c('(none)' = '', qres_get_distinct_authors(con)),
+                             server  = TRUE)
+        updateSelectizeInput(session, 'comp_species',
+                             choices = c('' , qres_get_species_with_counts(con)), server = TRUE)
+        updateSelectizeInput(session, 'comp_perturb_type',
+                             choices = c('', qres_get_distinct_perturbation_types(con)),
+                             server = TRUE)
+      }, error = function(e) NULL)
+    }, delay = 0)
   }, once = TRUE)
 
   # ── Initialize DB ──────────────────────────────────────────────────────────

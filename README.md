@@ -8,7 +8,9 @@ research and honest cross-tool comparison of growth curve estimators.
 KinBiont.jl, and omniplate on the *same* pre-processed raw data; query all results
 by species / medium / temperature / perturbation.
 
-See [ARCHITECTURE.md](ARCHITECTURE.md) for a map of how pages and code modules connect.
+See [ARCHITECTURE.md](ARCHITECTURE.md) for a map of how pages and code modules connect.  
+See [PUBLICATIONS.md](PUBLICATIONS.md) for a full list of data sources with well and curve counts.  
+See [ROADMAP.md](ROADMAP.md) for what each dataset unlocks and what is planned.
 
 ---
 
@@ -240,7 +242,15 @@ KINBIONT_SYSIMAGE=path/to/image    # pre-compiled Julia sysimage (optional)
 
 ## Current datasets
 
-19 *E. coli* K12 NCM3722 growth curves in MOPS + 3 g/L glucose, 27–45 °C (1 °C steps).  
-Source: Katipoglu-Yazan et al. (2023). DOI: [10.57745/GCKG7W](https://doi.org/10.57745/GCKG7W)
+**8,868 datasets · 37,880 growth curves · 2 species**
 
-Yeast datasets (Mustonen, Bollenbach, Holic groups) — integration in progress.
+| Publication | Species | Datasets | Curves |
+|---|---|---:|---:|
+| Lao & Ying (2026) — Keio single-gene knockouts | *E. coli* K-12 BW25113 | 7,818 | 23,454 |
+| Aida & Ying (2025) — chemically defined media | *E. coli* BW25113 | 1,029 | ~13,448 |
+| Katipoglu-Yazan et al. (2023) — temperature gradient | *E. coli* K12 NCM3722 | 20 | 960 |
+| Sao Emani C et al. / Baker B (2018) — genetic complements | *M. tuberculosis* CDC1551 | 1 | 18 |
+
+Full details including DOIs, data repositories, and quality notes: [PUBLICATIONS.md](PUBLICATIONS.md)
+
+Yeast datasets (*S. cerevisiae* — Mustonen, Bollenbach, Holic groups) — integration in progress.

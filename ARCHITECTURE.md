@@ -143,7 +143,7 @@ server runs continuously and holds all reactive state.
 ## Code module map
 
 ```
-app.R  (single server + UI file, ~5500 lines)
+app.R  (single server + UI file, ~5700 lines)
   │
   ├── sources on startup:
   │
@@ -161,6 +161,14 @@ app.R  (single server + UI file, ~5500 lines)
   │   ├── logphase_reader.R LogPhase600 multi-plate Excel
   │   │                     (auto-reads well metadata from Results sheets)
   │   ├── metadata.R        metaData.csv → dataset/plate/well_metadata tables
+  │   │                     calls qres_sync_conditions() after each batch
+  │   ├── keio_import.R     Keio collection batch import (7,818 datasets)
+  │   │                     Lao & Ying 2026 · DOI 10.1038/s41597-026-07075-9
+  │   ├── aida_import.R     Aida CDM batch import (1,029 datasets)
+  │   │                     Aida & Ying 2025 · DOI 10.1038/s41597-025-05356-3
+  │   │                     also writes medium_composition table
+  │   ├── baker_import.R    Baker 2018 M. tuberculosis import (1 dataset)
+  │   │                     Sao Emani et al. 2018 · DOI 10.1038/sdata.2018.184
   │   ├── biotek.R          BioTek raw format reader
   │   └── tecan.R           TECAN raw format reader
   │
@@ -247,11 +255,20 @@ data/
 └── raw_csv/
     └── raw_data_template.csv       ← template for users
 
-phamig.duckdb                       ← all metadata, registry, embargo
+qres.duckdb                         ← all metadata, registry, embargo
   ├── dataset                       (id, title, authors, year, doi, raw_file)
   ├── plate                         (id, dataset_id, temperature_c, plate_reader)
   ├── well_metadata                 (well, plate_id, species, strain, medium,
   │                                  perturbation, is_blank, is_control)
+  ├── dataset_conditions            (dataset_id, species, strain, medium_type,
+  │                                  perturbation_type, perturbation)
+  │                                 ← pre-aggregated GROUP BY result; replaces
+  │                                   the per-query subquery on well_metadata.
+  │                                   Populated by qres_sync_conditions() after
+  │                                   every import. Indexed on dataset_id + species.
+  ├── medium_composition            (dataset_id, compound, conc_mm, conc_base_mm,
+  │                                  is_stressor, is_buffer_adj)
+  │                                 ← populated by Aida CDM import only
   ├── raw_measurement_registry      (dataset_id, path, storage_type, n_wells)
   ├── processing_run                (run_id, dataset_id, plugin, timestamp)
   ├── derived_metric                (run_id, well_id, metric_name, value)
@@ -335,3 +352,25 @@ Long-running plugin computations use `future_promise` to avoid blocking the UI:
 Results are cached with `bindCache(comp_all_raw(), ...)` keyed on the raw data
 and selected tools, so switching tabs or changing unrelated inputs does not
 re-trigger fitting.
+
+---
+
+## Startup sequence
+
+```
+  session starts
+       │
+       ├─ session$onFlushed(once=TRUE)
+       │       │
+       │       └─ later::later(delay=0)   ← deferred so the browser receives
+       │               │                    the initial HTML before DB queries run
+       │               ├─ qres_migrate_schema(con)    (DDL + backfill)
+       │               ├─ qres_search_datasets(con)   → dataset_results reactiveVal
+       │               └─ updateSelectizeInput × 3    (species, author, perturb_type)
+       │
+       └─ UI renders immediately; search results populate ~1–3 s later
+```
+
+`qres_migrate_schema` is idempotent: it runs `ALTER TABLE … ADD COLUMN IF NOT EXISTS`,
+creates missing tables, backfills `dataset_conditions` for any datasets not yet
+represented there, and standardises species names.  Safe to run on every startup.
