@@ -163,6 +163,26 @@ qres_init_schema <- function(con) {
     )
   ")
 
+  # ── dose_response_registry: Parquet files for dose-response experiments ──────
+  # Separate from raw_measurement_registry (which is time-series only).
+  # Parquet schema: well, conc_ng_ml, value (blank-subtracted), value_raw.
+  DBI::dbExecute(con, "
+    CREATE TABLE IF NOT EXISTS dose_response_registry (
+      dataset_id   TEXT NOT NULL,
+      storage_type TEXT DEFAULT 'parquet',
+      path         TEXT,
+      compound     TEXT,
+      conc_unit    TEXT,
+      signal_type  TEXT,
+      n_wells      INTEGER,
+      n_conc       INTEGER,
+      created_at   TIMESTAMP DEFAULT current_timestamp
+    )
+  ")
+  tryCatch(DBI::dbExecute(con,
+    "CREATE INDEX IF NOT EXISTS idx_drr_dataset_id ON dose_response_registry(dataset_id)"),
+    error = function(e) NULL)
+
   # ── user_note: bug reports, observations, feature requests ───────────────
   DBI::dbExecute(con, "
     CREATE TABLE IF NOT EXISTS user_note (
@@ -251,7 +271,8 @@ qres_migrate_schema <- function(con) {
 }
 
 qres_reset_tables <- function(con) {
-  tbls <- c('dataset_conditions', 'medium_composition', 'user_note', 'model_fit', 'derived_metric',
+  tbls <- c('dataset_conditions', 'dose_response_registry', 'medium_composition',
+            'user_note', 'model_fit', 'derived_metric',
             'processing_run', 'raw_measurement_registry', 'well_metadata', 'plate', 'dataset')
   for (t in tbls)
     tryCatch(DBI::dbExecute(con, paste('DROP TABLE IF EXISTS', t)), error = function(e) NULL)

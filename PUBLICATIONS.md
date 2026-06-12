@@ -9,7 +9,8 @@ Numbers reflect the live database (last updated June 2026).
 
 | | Datasets | Growth curves | Species |
 |---|---:|---:|---|
-| **Total** | **8,868** | **37,880** | *E. coli*, *M. tuberculosis* |
+| **Total** | **8,872** | **37,892** | *E. coli*, *M. tuberculosis*, *T. brucei* |
+| of which dose–response | **2** | — | *T. brucei* |
 
 ---
 
@@ -99,6 +100,45 @@ Numbers reflect the live database (last updated June 2026).
 | **Growth curves** | **18** (3 biological replicates × 6 strains) |
 | Author metrics | — |
 | Notes | **Phenotype-rescue validation dataset.** Complement strains restore the functional gene into the knockout background; growth should match wild-type CDC1551, confirming that any phenotype in the knockout (in Metabolights MTBLS541) is specifically caused by gene loss. QC warning shown: flask/tube data with artificial well labels, not a spatial microplate. |
+
+---
+
+---
+
+### 5 — Waithaka et al. (2022) · *T. brucei* RBSR RNAi growth curves
+
+| Field | Value |
+|---|---|
+| Authors | Waithaka BG, Ahrens M, Kishore S, Shankarampeta I, Kaufer A, Brecht M, Clayton CE |
+| Year | 2022 |
+| Journal | PLoS Neglected Tropical Diseases |
+| DOI | [10.1371/journal.pntd.0010876](https://doi.org/10.1371/journal.pntd.0010876) |
+| Species | *Trypanosoma brucei* |
+| Strain | WT (parent) + RBSR1 and RBSR2 RNAi clones (c2, c3, c4 ± tetracycline) |
+| Medium | HMI-9, 27 °C |
+| Measurement | Hemocytometer cell counts, cumulative cells/mL |
+| Signal type | `cell_count` (cumulative count without dilution bias) |
+| **Datasets** | **2** (RBSR1 and RBSR2 knockdown lines) |
+| **Growth curves** | **12** (5 + 7 conditions) |
+| Notes | First *T. brucei* dataset in the repository. Cumulative cell counts track population growth across serial dilution passages. RBSR1 and RBSR2 are two RNA binding proteins of the RBSR family; RNAi knockdown is induced by tetracycline. |
+
+---
+
+### 6 — Waithaka et al. (2022) · *T. brucei* puromycin dose–response
+
+| Field | Value |
+|---|---|
+| Authors | Waithaka BG, Ahrens M, Kishore S, Shankarampeta I, Kaufer A, Brecht M, Clayton CE |
+| Year | 2022 |
+| DOI | [10.1371/journal.pntd.0010876](https://doi.org/10.1371/journal.pntd.0010876) |
+| Species | *Trypanosoma brucei* |
+| Signal type | `fluorescence` (puromycin resistance reporter, blank-subtracted) |
+| Experiment A | **Tethering candidates** — 9 mRNA processing factors (GFP ctrl, CPSF73, U2AF65, DRBD3, DRBD4, HNRNPFH, TRS1, TRSIP, RBSR) × 2 clones × ±tetracycline × 4 replicates |
+| Experiment B | **PPT length reporters** — polypyrimidine tract (PPT) length variants × ±boxB tethering × replicates |
+| X-axis | Puromycin concentration (0–12 800 ng/mL) |
+| **Datasets** | **2** (tethering + PPT length) |
+| Storage | `dose_response_registry` (separate from time-series `raw_measurement_registry`) |
+| Notes | These are endpoint fluorescence assays — NOT time-series. Cannot be mixed with OD600 or cell count data. Stored in a dedicated `dose_response_registry` table and `data/parquet/dose_response/` directory. A dose–response analysis view (IC50 fitting) is planned but not yet in the UI. |
 
 ---
 

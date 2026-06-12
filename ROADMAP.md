@@ -76,13 +76,15 @@ QC plots require plate-reader data with standard well coordinates (A1–H12).
 Items below are not yet implemented. They are roughly ordered by priority.
 
 ### Data coverage
+- [x] *T. brucei* RBSR RNAi growth curves — Waithaka 2022, `signal_type = 'cell_count'`
+- [x] *T. brucei* puromycin dose–response — Waithaka 2022, `signal_type = 'fluorescence'`
 - [ ] *S. cerevisiae* datasets (Mustonen, Bollenbach, Holic groups)
 - [ ] Additional *M. tuberculosis* knockouts (Metabolights MTBLS541)
 - [ ] Additional perturbation types: pH, osmotic stress, nutrient limitation
 
 ### Analysis
 - [ ] omniplate Python plugin (absolute µmax, AUC)
-- [ ] Dose–response curve fitting (IC50, MIC estimation) for chemical perturbation datasets
+- [ ] Dose–response analysis view: IC50/MIC fitting for datasets in `dose_response_registry` (Waithaka puro data ready)
 - [ ] Growth rate vs. temperature (Eppley curve, Arrhenius fit) for the NCM3722 temperature gradient data
 - [ ] Replicate aggregation: mean ± SD envelope option in growth curve plots
 

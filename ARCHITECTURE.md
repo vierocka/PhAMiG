@@ -169,6 +169,10 @@ app.R  (single server + UI file, ~5700 lines)
   │   │                     also writes medium_composition table
   │   ├── baker_import.R    Baker 2018 M. tuberculosis import (1 dataset)
   │   │                     Sao Emani et al. 2018 · DOI 10.1038/sdata.2018.184
+  │   ├── waithaka_import.R Waithaka 2022 T. brucei import (2+2 datasets)
+  │   │                     DOI 10.1371/journal.pntd.0010876
+  │   │                     · waithaka_import_rbsr()    → cell_count time-series (raw_measurement_registry)
+  │   │                     · waithaka_import_puro_dr() → fluorescence dose-response (dose_response_registry)
   │   ├── biotek.R          BioTek raw format reader
   │   └── tecan.R           TECAN raw format reader
   │
@@ -270,6 +274,12 @@ qres.duckdb                         ← all metadata, registry, embargo
   │                                  is_stressor, is_buffer_adj)
   │                                 ← populated by Aida CDM import only
   ├── raw_measurement_registry      (dataset_id, path, storage_type, n_wells)
+  │                                ← time-series only (OD600, cell_count, etc.)
+  ├── dose_response_registry        (dataset_id, path, compound, conc_unit, signal_type,
+  │                                  n_wells, n_conc)
+  │                                ← endpoint fluorescence / viability assays
+  │                                  Parquet: well, conc_ng_ml, value, value_raw
+  │                                  stored in data/parquet/dose_response/
   ├── processing_run                (run_id, dataset_id, plugin, timestamp)
   ├── derived_metric                (run_id, well_id, metric_name, value)
   └── upload_embargo                (dataset_id, email_hash, key_hash,
