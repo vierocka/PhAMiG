@@ -60,11 +60,13 @@ qres_search_datasets <- function(con, search = NULL) {
            dc.perturbation_type, dc.perturbation,
            p.temperature_c, d.doi, d.year, d.authors, d.raw_file,
            p.plate_reader,
-           CASE WHEN rmr.path IS NOT NULL THEN 1 ELSE 0 END AS has_raw
+           CASE WHEN rmr.path IS NOT NULL THEN 1 ELSE 0 END AS has_raw,
+           COALESCE(rmr.signal_type, drr.signal_type) AS signal_type
     FROM dataset d
     LEFT JOIN plate p USING(dataset_id)
     LEFT JOIN dataset_conditions dc USING(dataset_id)
     LEFT JOIN raw_measurement_registry rmr USING(dataset_id)
+    LEFT JOIN dose_response_registry drr USING(dataset_id)
     LEFT JOIN upload_embargo ue USING(dataset_id)
     WHERE (ue.released = TRUE OR ue.dataset_id IS NULL)
   "

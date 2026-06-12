@@ -487,6 +487,7 @@ waithaka_import_puro_dr <- function(con, source_dir, overwrite = FALSE) {
 
 waithaka_import_all <- function(con, source_dir, overwrite = FALSE) {
   .wmsg("=== Waithaka 2022 import START ===")
+  qres_init_schema(con)    # ensure dose_response_registry and all tables exist
   waithaka_import_rbsr(con, source_dir, overwrite)
   waithaka_import_puro_dr(con, source_dir, overwrite)
   .wmsg("=== Waithaka 2022 import DONE ===")

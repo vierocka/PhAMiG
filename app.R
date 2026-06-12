@@ -706,6 +706,12 @@ ui_search <- fluidPage(
               tags$hr(style = 'margin:4px 0;'),
               tags$span(class = 'adv-group-label', 'Experimental'),
               textInput('adv_plate_reader', 'Plate reader', placeholder = 'e.g. Biotek', width = '100%'),
+              selectInput('adv_signal_type', 'Measurement type',
+                choices = c('(all)' = '',
+                            'OD600 (absorbance)' = 'OD600',
+                            'Cell count (CFU / KFU)' = 'cell_count',
+                            'Fluorescence (RFU)' = 'fluorescence'),
+                width = '100%'),
               tags$hr(style = 'margin:4px 0;'),
               tags$span(class = 'adv-group-label', 'Publication'),
               textInput('adv_author', 'Author', placeholder = 'e.g. Bollenbach', width = '100%'),
@@ -726,6 +732,7 @@ ui_search <- fluidPage(
 
         # Right: table + actions + detail panel
         column(9,
+          uiOutput('signal_type_legend'),
           DTOutput('dataset_table'),
           br(),
           fluidRow(
@@ -1587,6 +1594,9 @@ server <- function(input, output, session) {
     df <- .txt(df, 'perturbation_type', input$adv_perturb_type)
     df <- .txt(df, 'perturbation',      input$adv_perturb)
     df <- .txt(df, 'plate_reader',      input$adv_plate_reader)
+    st_sel <- input$adv_signal_type %||% ''
+    if (nzchar(st_sel) && 'signal_type' %in% names(df))
+      df <- df[!is.na(df$signal_type) & df$signal_type == st_sel, ]
     df <- .txt(df, 'authors',           input$adv_author)
     df <- .txt(df, 'doi',               input$adv_doi)
 
@@ -1701,7 +1711,8 @@ server <- function(input, output, session) {
     q_active <- nzchar(trimws(input$search %||% ''))
     adv_active <- any(nzchar(c(
       input$adv_species %||% '', input$adv_strain %||% '', input$adv_medium %||% '',
-      input$adv_perturb %||% '', input$adv_author %||% '', input$adv_doi %||% ''
+      input$adv_perturb %||% '', input$adv_author %||% '', input$adv_doi %||% '',
+      input$adv_signal_type %||% ''
     ))) || !is.na(input$adv_temp_min) || !is.na(input$adv_temp_max) ||
            nzchar(input$adv_perturb_type %||% '')
 
@@ -1713,6 +1724,32 @@ server <- function(input, output, session) {
       sprintf('%d of %d dataset%s match', n_dis, n_all, if (n_dis == 1) '' else 's')
 
     tags$p(class = 'result-count', lbl)
+  })
+
+  # Legend strip shown above the results table when multiple signal types are present
+  output$signal_type_legend <- renderUI({
+    if (!search_performed()) return(NULL)
+    df <- display_results()
+    if (nrow(df) == 0 || !'signal_type' %in% names(df)) return(NULL)
+    types_present <- sort(unique(na.omit(df$signal_type)))
+    if (length(types_present) == 0) return(NULL)
+
+    clr <- c(OD600 = 'rgba(91,155,213,0.22)', cell_count = 'rgba(112,173,71,0.22)',
+             fluorescence = 'rgba(180,100,200,0.22)')
+    lbl <- c(OD600 = 'OD600 (absorbance)', cell_count = 'Cell count (CFU/KFU)',
+             fluorescence = 'Fluorescence (RFU)')
+
+    chips <- lapply(types_present, function(st) {
+      bg  <- clr[[st]] %||% 'rgba(180,180,180,0.22)'
+      txt <- lbl[[st]] %||% st
+      tags$span(txt, style = paste0(
+        'display:inline-block; padding:1px 8px; border-radius:3px; margin-left:8px;',
+        'font-size:11px; color:#444; background:', bg, ';'))
+    })
+
+    tags$div(style = 'text-align:right; margin-bottom:3px; line-height:2;',
+      tags$span('Row colour:', style = 'font-size:11px; color:#999;'),
+      chips)
   })
 
   # Facets panel — counts from the currently displayed (filtered) results
@@ -1826,11 +1863,21 @@ server <- function(input, output, session) {
         tags$hr(style = 'margin:5px 0;'))
     }
 
+    .signal_label <- function(st) {
+      dplyr::case_match(st,
+        'OD600'        ~ 'OD600 (absorbance)',
+        'cell_count'   ~ 'Cell count (CFU/KFU)',
+        'fluorescence' ~ 'Fluorescence (RFU)',
+        .default       = st)
+    }
+
     tags$div(class = 'facet-panel',
-      .block('Species',     df$species),
+      .block('Species',          df$species),
       .block_perturbation(df),
-      .block('Temperature', paste0(df$temperature_c, '°C')),
-      .block('Medium',      df$medium_type)
+      if ('signal_type' %in% names(df) && any(!is.na(df$signal_type)))
+        .block('Measurement type', .signal_label(df$signal_type)),
+      .block('Temperature',      paste0(df$temperature_c, '°C')),
+      .block('Medium',           df$medium_type)
     )
   })
 
@@ -1860,9 +1907,10 @@ server <- function(input, output, session) {
     updateTextInput(session,    'adv_medium',       value = '')
     updateNumericInput(session, 'adv_temp_min',     value = NA)
     updateNumericInput(session, 'adv_temp_max',     value = NA)
-    updateSelectInput(session,  'adv_perturb_type', selected = '')
-    updateTextInput(session,    'adv_perturb',      value = '')
-    updateTextInput(session,    'adv_plate_reader', value = '')
+    updateSelectInput(session,  'adv_perturb_type',  selected = '')
+    updateTextInput(session,    'adv_perturb',       value = '')
+    updateTextInput(session,    'adv_plate_reader',  value = '')
+    updateSelectInput(session,  'adv_signal_type',   selected = '')
     updateTextInput(session,    'adv_author',       value = '')
     updateNumericInput(session, 'adv_year_min',     value = NA)
     updateNumericInput(session, 'adv_year_max',     value = NA)
@@ -1995,33 +2043,49 @@ server <- function(input, output, session) {
     # Column order: most useful first, verbose last
     col_order <- c('dataset_id', 'species', 'strain', 'temperature_c',
                    'perturbation_type', 'perturbation', 'medium_type',
-                   'year', 'authors', 'has_raw', 'doi', 'raw_file', 'plate_reader')
+                   'signal_type', 'year', 'authors', 'has_raw', 'doi', 'raw_file', 'plate_reader')
     display <- display[, intersect(col_order, names(display)), drop = FALSE]
 
     # Columns hidden by default (accessible via column visibility button)
     hidden_idx <- which(names(display) %in% c('dataset_id', 'raw_file', 'plate_reader', 'doi')) - 1L
 
+    # Row coloring by signal_type via JS rowCallback
+    st_col <- which(names(display) == 'signal_type') - 1L   # 0-indexed for JS
+    row_cb <- if (length(st_col) == 1L) {
+      DT::JS(sprintf(
+        "function(row, data) {
+           var st = data[%d];
+           if      (st === 'OD600')        $(row).css('background-color','rgba(91,155,213,0.13)');
+           else if (st === 'cell_count')   $(row).css('background-color','rgba(112,173,71,0.13)');
+           else if (st === 'fluorescence') $(row).css('background-color','rgba(180,100,200,0.13)');
+         }", st_col))
+    } else NULL
+
+    dt_opts <- list(
+      pageLength     = 12,
+      scrollX        = TRUE,
+      scrollCollapse = TRUE,
+      autoWidth      = FALSE,
+      dom            = 'Bfrtip',
+      buttons        = list(list(extend = 'colvis', text = 'Show/hide columns')),
+      columnDefs     = list(
+        list(visible = FALSE, targets = hidden_idx),
+        list(width = '90px',  targets = which(names(display) == 'dataset_id') - 1L),
+        list(width = '80px',  targets = which(names(display) == 'species') - 1L),
+        list(width = '55px',  targets = which(names(display) == 'temperature_c') - 1L),
+        list(width = '110px', targets = which(names(display) == 'perturbation_type') - 1L),
+        list(width = '100px', targets = which(names(display) == 'signal_type') - 1L),
+        list(width = '130px', targets = which(names(display) %in% c('medium_type','authors')) - 1L),
+        list(className = 'dt-center', targets = '_all')
+      )
+    )
+    if (!is.null(row_cb)) dt_opts$rowCallback <- row_cb
+
     datatable(display,
               selection  = 'multiple',
               extensions = 'Buttons',
-              options    = list(
-                pageLength  = 12,
-                scrollX     = TRUE,
-                scrollCollapse = TRUE,
-                autoWidth   = FALSE,
-                dom         = 'Bfrtip',
-                buttons     = list(list(extend = 'colvis', text = 'Show/hide columns')),
-                columnDefs  = list(
-                  list(visible = FALSE, targets = hidden_idx),
-                  list(width = '90px',  targets = which(names(display) == 'dataset_id') - 1L),
-                  list(width = '80px',  targets = which(names(display) == 'species') - 1L),
-                  list(width = '55px',  targets = which(names(display) == 'temperature_c') - 1L),
-                  list(width = '110px', targets = which(names(display) == 'perturbation_type') - 1L),
-                  list(width = '130px', targets = which(names(display) %in% c('medium_type','authors')) - 1L),
-                  list(className = 'dt-center', targets = '_all')
-                )
-              ),
-              rownames = FALSE)
+              options    = dt_opts,
+              rownames   = FALSE)
   })
 
   # Download current (filtered) search results as CSV
