@@ -117,6 +117,35 @@ qres_init_schema <- function(con) {
     )
   ")
 
+  # ── dataset_conditions: pre-aggregated search summary (one row per condition) ───
+  # Replaces the GROUP BY subquery on well_metadata in every search call.
+  # Populated by qres_sync_conditions(); maintained by all import scripts.
+  DBI::dbExecute(con, "
+    CREATE TABLE IF NOT EXISTS dataset_conditions (
+      dataset_id        TEXT NOT NULL,
+      species           TEXT,
+      strain            TEXT,
+      medium_type       TEXT,
+      perturbation_type TEXT,
+      perturbation      TEXT
+    )
+  ")
+
+  # ── Indexes on foreign-key columns (not covered by PRIMARY KEY) ───────────────
+  # Speeds up JOIN chains: dataset→plate, plate→well_metadata, well_metadata→conditions.
+  # Also helps species/perturbation prefix lookups in filtered queries.
+  for (sql in c(
+    "CREATE INDEX IF NOT EXISTS idx_wm_plate_id      ON well_metadata(plate_id)",
+    "CREATE INDEX IF NOT EXISTS idx_plate_dataset_id ON plate(dataset_id)",
+    "CREATE INDEX IF NOT EXISTS idx_dc_dataset_id    ON dataset_conditions(dataset_id)",
+    "CREATE INDEX IF NOT EXISTS idx_dc_species       ON dataset_conditions(species)",
+    "CREATE INDEX IF NOT EXISTS idx_dm_dataset_id    ON derived_metric(dataset_id)",
+    "CREATE INDEX IF NOT EXISTS idx_dm_well_id       ON derived_metric(well_id)",
+    "CREATE INDEX IF NOT EXISTS idx_mf_dataset_id    ON model_fit(dataset_id)",
+    "CREATE INDEX IF NOT EXISTS idx_mf_well_id       ON model_fit(well_id)",
+    "CREATE INDEX IF NOT EXISTS idx_pr_dataset_id    ON processing_run(dataset_id)"
+  )) tryCatch(DBI::dbExecute(con, sql), error = function(e) NULL)
+
   # ── medium_composition: per-compound concentrations for chemically defined media ──
   # Populated by import scripts (e.g. Aida 2025 CDM dataset).
   # conc_mm      = concentration in this condition (mM)
@@ -206,11 +235,23 @@ qres_migrate_schema <- function(con) {
   tryCatch(DBI::dbExecute(con,
     "UPDATE well_metadata SET species = 'E. coli' WHERE species = 'Escherichia coli'"),
     error = function(e) NULL)
+  # Backfill dataset_conditions for any datasets not yet represented there.
+  # The NOT IN guard makes this idempotent — only fills gaps, never duplicates.
+  tryCatch(DBI::dbExecute(con, "
+    INSERT INTO dataset_conditions
+      (dataset_id, species, strain, medium_type, perturbation_type, perturbation)
+    SELECT DISTINCT p.dataset_id, w.species, w.strain,
+           w.medium_type, w.perturbation_type, w.perturbation
+    FROM well_metadata w
+    JOIN plate p ON w.plate_id = p.plate_id
+    WHERE p.dataset_id NOT IN (
+      SELECT DISTINCT dataset_id FROM dataset_conditions WHERE dataset_id IS NOT NULL
+    )"), error = function(e) NULL)
   invisible(TRUE)
 }
 
 qres_reset_tables <- function(con) {
-  tbls <- c('medium_composition', 'user_note', 'model_fit', 'derived_metric',
+  tbls <- c('dataset_conditions', 'medium_composition', 'user_note', 'model_fit', 'derived_metric',
             'processing_run', 'raw_measurement_registry', 'well_metadata', 'plate', 'dataset')
   for (t in tbls)
     tryCatch(DBI::dbExecute(con, paste('DROP TABLE IF EXISTS', t)), error = function(e) NULL)

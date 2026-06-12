@@ -204,6 +204,7 @@ baker_import_complements <- function(
                   nrow(long), length(unique(long$well_id)), 'OD600')
   )
 
+  tryCatch(qres_sync_conditions(con, did), error = function(e) NULL)
   .msg('Done. dataset_id: ', did,
        ' | strains: ', length(strain_names),
        ' | wells: ', nrow(col_meta),

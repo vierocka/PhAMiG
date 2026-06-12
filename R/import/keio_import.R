@@ -347,6 +347,7 @@ keio_import_all <- function(
     .msg(sprintf('Inserted %d metric rows.', nrow(metrics)))
   }
 
+  tryCatch(qres_sync_conditions(con), error = function(e) NULL)
   .msg(sprintf(
     'Import complete. Datasets: ok=%d  skip=%d  err=%d  |  Metrics: %d rows.',
     n_ok, n_skip, n_err, if (exists('metrics')) nrow(metrics) else 0L))

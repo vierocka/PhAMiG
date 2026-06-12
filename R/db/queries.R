@@ -4,7 +4,37 @@
 #   c2: computed abbreviation from stored full name (e.g. stored 'Escherichia coli', search 'E. coli')
 #   c3: abbreviated form of the search term, when term is a full binomial
 #       (e.g. stored 'E. coli', search 'Escherichia coli')
-.species_sql_clause <- function(term, col = "coalesce(w.species,'')") {
+# Sync dataset_conditions for the given dataset_ids (or all datasets if NULL).
+# Must be called by every import script after writing to well_metadata.
+qres_sync_conditions <- function(con, dataset_ids = NULL) {
+  if (!is.null(dataset_ids) && length(dataset_ids) > 0L) {
+    ph <- paste(rep('?', length(dataset_ids)), collapse = ',')
+    DBI::dbExecute(con,
+      sprintf("DELETE FROM dataset_conditions WHERE dataset_id IN (%s)", ph),
+      params = as.list(dataset_ids))
+    DBI::dbExecute(con, sprintf("
+      INSERT INTO dataset_conditions
+        (dataset_id, species, strain, medium_type, perturbation_type, perturbation)
+      SELECT DISTINCT p.dataset_id, w.species, w.strain,
+             w.medium_type, w.perturbation_type, w.perturbation
+      FROM well_metadata w
+      JOIN plate p ON w.plate_id = p.plate_id
+      WHERE p.dataset_id IN (%s)", ph),
+      params = as.list(dataset_ids))
+  } else {
+    DBI::dbExecute(con, "DELETE FROM dataset_conditions")
+    DBI::dbExecute(con, "
+      INSERT INTO dataset_conditions
+        (dataset_id, species, strain, medium_type, perturbation_type, perturbation)
+      SELECT DISTINCT p.dataset_id, w.species, w.strain,
+             w.medium_type, w.perturbation_type, w.perturbation
+      FROM well_metadata w
+      JOIN plate p ON w.plate_id = p.plate_id")
+  }
+  invisible(NULL)
+}
+
+.species_sql_clause <- function(term, col = "coalesce(dc.species,'')") {
   safe   <- qres_sql_safe(tolower(trimws(term)))
   c1     <- sprintf("lower(%s) LIKE lower('%%%s%%')", col, safe)
   a_col  <- sprintf(
@@ -26,18 +56,14 @@ qres_search_datasets <- function(con, search = NULL) {
   # Embargo filter: only show datasets that are released OR have no embargo record.
   # Legacy datasets (imported before embargo feature) have no embargo row → shown.
   base_sql <- "
-    SELECT d.dataset_id, w.species, w.strain, w.medium_type,
-           w.perturbation_type, w.perturbation,
+    SELECT d.dataset_id, dc.species, dc.strain, dc.medium_type,
+           dc.perturbation_type, dc.perturbation,
            p.temperature_c, d.doi, d.year, d.authors, d.raw_file,
            p.plate_reader,
            CASE WHEN rmr.path IS NOT NULL THEN 1 ELSE 0 END AS has_raw
     FROM dataset d
     LEFT JOIN plate p USING(dataset_id)
-    LEFT JOIN (
-      SELECT plate_id, species, strain, medium_type, perturbation_type, perturbation
-      FROM well_metadata
-      GROUP BY plate_id, species, strain, medium_type, perturbation_type, perturbation
-    ) w USING(plate_id)
+    LEFT JOIN dataset_conditions dc USING(dataset_id)
     LEFT JOIN raw_measurement_registry rmr USING(dataset_id)
     LEFT JOIN upload_embargo ue USING(dataset_id)
     WHERE (ue.released = TRUE OR ue.dataset_id IS NULL)
@@ -55,12 +81,12 @@ qres_search_datasets <- function(con, search = NULL) {
   tokens <- vapply(tokens, qres_sql_safe, character(1L))
 
   search_expr <- "lower(
-        coalesce(d.title,'')              || ' ' || coalesce(d.doi,'')           || ' ' ||
-        coalesce(d.authors,'')            || ' ' || coalesce(w.species,'')       || ' ' ||
-        coalesce(substr(w.species,1,1)||'. '||trim(substr(w.species,instr(w.species,' ')+1)),'') || ' ' ||
-        coalesce(w.strain,'')             || ' ' || coalesce(w.medium_type,'')   || ' ' ||
-        coalesce(p.plate_reader,'')       || ' ' || coalesce(w.perturbation_type,'') || ' ' ||
-        coalesce(w.perturbation,'')       || ' ' ||
+        coalesce(d.title,'')               || ' ' || coalesce(d.doi,'')            || ' ' ||
+        coalesce(d.authors,'')             || ' ' || coalesce(dc.species,'')        || ' ' ||
+        coalesce(substr(dc.species,1,1)||'. '||trim(substr(dc.species,instr(dc.species,' ')+1)),'') || ' ' ||
+        coalesce(dc.strain,'')             || ' ' || coalesce(dc.medium_type,'')    || ' ' ||
+        coalesce(p.plate_reader,'')        || ' ' || coalesce(dc.perturbation_type,'') || ' ' ||
+        coalesce(dc.perturbation,'')       || ' ' ||
         coalesce(CAST(p.temperature_c AS VARCHAR),'') || ' ' ||
         coalesce(CAST(d.year AS VARCHAR),'')
       )"
@@ -72,7 +98,7 @@ qres_search_datasets <- function(con, search = NULL) {
     base <- sprintf("%s LIKE '%%%s%%'", search_expr, tok)
     if (grepl("^[a-z]{5,}$", tok)) {
       fl <- substr(tok, 1L, 1L)
-      genus_clause <- sprintf("lower(coalesce(w.species,'')) LIKE '%s.%%'", fl)
+      genus_clause <- sprintf("lower(coalesce(dc.species,'')) LIKE '%s.%%'", fl)
       paste0("(", base, " OR ", genus_clause, ")")
     } else {
       paste0("(", base, ")")
@@ -127,17 +153,13 @@ qres_search_by_publication <- function(con, author = NULL, year_min = NULL,
 
   DBI::dbGetQuery(con, sprintf("
     SELECT d.dataset_id, d.title, d.authors, d.year, d.doi, d.source_url,
-           w.species, w.strain, w.medium_type,
-           w.perturbation_type, w.perturbation,
+           dc.species, dc.strain, dc.medium_type,
+           dc.perturbation_type, dc.perturbation,
            p.temperature_c, p.plate_reader, p.spectrophotometer,
            CASE WHEN rmr.path IS NOT NULL THEN 1 ELSE 0 END AS has_raw
     FROM dataset d
     LEFT JOIN plate p USING(dataset_id)
-    LEFT JOIN (
-      SELECT plate_id, species, strain, medium_type, perturbation_type, perturbation
-      FROM well_metadata
-      GROUP BY plate_id, species, strain, medium_type, perturbation_type, perturbation
-    ) w USING(plate_id)
+    LEFT JOIN dataset_conditions dc USING(dataset_id)
     LEFT JOIN raw_measurement_registry rmr USING(dataset_id)
     LEFT JOIN upload_embargo ue USING(dataset_id)
     %s
@@ -149,14 +171,11 @@ qres_get_datasets_by_ids <- function(con, ids) {
   if (length(ids) == 0) return(data.frame())
   ph <- paste(rep('?', length(ids)), collapse = ', ')
   DBI::dbGetQuery(con, sprintf("
-    SELECT d.dataset_id, w.species, w.strain, p.temperature_c,
-           w.medium_type, w.perturbation_type, w.perturbation, d.authors
+    SELECT d.dataset_id, dc.species, dc.strain, p.temperature_c,
+           dc.medium_type, dc.perturbation_type, dc.perturbation, d.authors
     FROM dataset d
     LEFT JOIN plate p USING(dataset_id)
-    LEFT JOIN (
-      SELECT plate_id, species, strain, medium_type, perturbation_type, perturbation
-      FROM well_metadata GROUP BY 1,2,3,4,5,6
-    ) w USING(plate_id)
+    LEFT JOIN dataset_conditions dc USING(dataset_id)
     WHERE d.dataset_id IN (%s)", ph),
     params = as.list(ids))
 }
@@ -202,7 +221,7 @@ qres_filter_datasets <- function(con, species = NULL, strain = NULL,
   }
   if (!is.null(strain) && nzchar(strain)) {
     clauses <- c(clauses, sprintf(
-      "lower(coalesce(w.strain,'')) LIKE lower('%%%s%%')", qres_sql_safe(strain)))
+      "lower(coalesce(dc.strain,'')) LIKE lower('%%%s%%')", qres_sql_safe(strain)))
   }
   if (!is.null(temp_min) && is.finite(as.numeric(temp_min %||% NA_real_))) {
     clauses <- c(clauses, sprintf("p.temperature_c >= %s", as.numeric(temp_min)))
@@ -212,14 +231,14 @@ qres_filter_datasets <- function(con, species = NULL, strain = NULL,
   }
   if (!is.null(medium) && nzchar(medium)) {
     clauses <- c(clauses, sprintf(
-      "lower(coalesce(w.medium_type,'')) LIKE lower('%%%s%%')", qres_sql_safe(medium)))
+      "lower(coalesce(dc.medium_type,'')) LIKE lower('%%%s%%')", qres_sql_safe(medium)))
   }
   if (!is.null(perturbation_type) && nzchar(perturbation_type) && perturbation_type != 'all') {
     # perturbation_type is an enum — validate, don't sanitise via string interpolation
     ptype_safe <- if (perturbation_type %in% c('chemical', 'genetic', 'temperature', 'none'))
       perturbation_type else stop('Invalid perturbation_type: ', perturbation_type)
     clauses <- c(clauses, sprintf(
-      "lower(coalesce(w.perturbation_type,'')) LIKE lower('%%%s%%')", ptype_safe))
+      "lower(coalesce(dc.perturbation_type,'')) LIKE lower('%%%s%%')", ptype_safe))
   }
   if (!is.null(perturbation) && nzchar(perturbation)) {
     temp_val <- suppressWarnings(as.numeric(perturbation))
@@ -227,11 +246,11 @@ qres_filter_datasets <- function(con, species = NULL, strain = NULL,
         (is.null(perturbation_type) || perturbation_type %in% c('all', 'temperature'))) {
       # Numeric value: temperature match. temp_val is coerced to number — safe.
       clauses <- c(clauses, sprintf(
-        "(lower(coalesce(w.perturbation,'')) LIKE lower('%%%s%%') OR ABS(p.temperature_c - %s) <= 0.5)",
+        "(lower(coalesce(dc.perturbation,'')) LIKE lower('%%%s%%') OR ABS(p.temperature_c - %s) <= 0.5)",
         qres_sql_safe(perturbation), temp_val))
     } else {
       clauses <- c(clauses, sprintf(
-        "lower(coalesce(w.perturbation,'')) LIKE lower('%%%s%%')", qres_sql_safe(perturbation)))
+        "lower(coalesce(dc.perturbation,'')) LIKE lower('%%%s%%')", qres_sql_safe(perturbation)))
     }
   }
   if (!is.null(year_min) && is.finite(as.numeric(year_min %||% NA_real_))) {
@@ -252,16 +271,12 @@ qres_filter_datasets <- function(con, species = NULL, strain = NULL,
   where   <- paste('WHERE', paste(clauses, collapse = ' AND '))
 
   DBI::dbGetQuery(con, sprintf("
-    SELECT d.dataset_id, w.species, w.strain, w.medium_type,
-           w.perturbation_type, w.perturbation,
+    SELECT d.dataset_id, dc.species, dc.strain, dc.medium_type,
+           dc.perturbation_type, dc.perturbation,
            p.temperature_c, d.doi, d.year, d.authors, rmr.path AS raw_path
     FROM dataset d
     LEFT JOIN plate p USING(dataset_id)
-    LEFT JOIN (
-      SELECT plate_id, species, strain, medium_type, perturbation_type, perturbation
-      FROM well_metadata
-      GROUP BY plate_id, species, strain, medium_type, perturbation_type, perturbation
-    ) w USING(plate_id)
+    LEFT JOIN dataset_conditions dc USING(dataset_id)
     LEFT JOIN raw_measurement_registry rmr USING(dataset_id)
     LEFT JOIN upload_embargo ue USING(dataset_id)
     %s

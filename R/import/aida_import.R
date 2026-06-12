@@ -322,6 +322,7 @@ aida_import_all <- function(
     })
   }
 
+  tryCatch(qres_sync_conditions(con), error = function(e) NULL)
   .msg(sprintf('Import complete. Datasets: ok=%d  skip=%d  err=%d', ok, skip, err))
 
   # ── 5. Author K and r metrics ───────────────────────────────────────────────

@@ -104,6 +104,7 @@ qres_import_metadata <- function(con, metadata_csv = 'data/metaData.csv') {
   .safe_write(con, 'dataset',       dataset)
   .safe_write(con, 'plate',         plate)
   .safe_write(con, 'well_metadata', well_meta)
+  tryCatch(qres_sync_conditions(con, dataset$dataset_id), error = function(e) NULL)
 
   message(sprintf('[import] %d datasets, %d plates, %d well summary rows written.',
                   nrow(dataset), nrow(plate), nrow(well_meta)))
