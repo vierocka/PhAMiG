@@ -9,7 +9,7 @@ Numbers reflect the live database (last updated June 2026).
 
 | | Datasets | Growth curves | Species |
 |---|---:|---:|---|
-| **Total** | **8,872** | **37,892** | *E. coli*, *M. tuberculosis*, *T. brucei* |
+| **Total** | **8,890** | **~38,300** | *E. coli*, *M. tuberculosis*, *T. brucei*, *P. somerae*, 8 marine fungi, *M. xanthus* |
 | of which dose–response | **2** | — | *T. brucei* |
 
 ---
@@ -142,13 +142,78 @@ Numbers reflect the live database (last updated June 2026).
 
 ---
 
+---
+
+### 7 — Taylor & Crooks (2021) · *Porphyromonas somerae* gentamicin
+
+| Field | Value |
+|---|---|
+| Authors | Taylor AM, Crooks WL |
+| Year | 2021 |
+| Journal | Frontiers in Microbiology |
+| DOI | [10.3389/fmicb.2021.674835](https://doi.org/10.3389/fmicb.2021.674835) |
+| Species | *Porphyromonas somerae* |
+| Strain | KFU |
+| Medium | Blood broth, anaerobic, 37 °C |
+| Measurement | OD600, tube-format, 12 time points over 2–24 h |
+| Perturbation type | chemical (antibiotic) |
+| Perturbation | Gentamicin: 0, 1, 10, 100 µg/mL |
+| **Datasets** | **1** |
+| **Growth curves** | **12** (4 conditions × 3 biological replicates) |
+| Notes | First *Porphyromonas* dataset. Tube-format data (not microplate); well labels are virtual (ctrl_r1…gent_100ugmL_r3). |
+
+---
+
+### 8 — Tamminen et al. (2020) · Marine fungi on 5 carbon sources
+
+| Field | Value |
+|---|---|
+| Authors | Tamminen A, Happonen P, Barth D, Holmstrom S, Wiebe MG |
+| Year | 2020 |
+| Journal | PLoS ONE |
+| DOI | [10.1371/journal.pone.0236822](https://doi.org/10.1371/journal.pone.0236822) |
+| Data | Zenodo [10.5281/zenodo.3670890](https://doi.org/10.5281/zenodo.3670890) |
+| Species | 8 filamentous marine fungi: *Penicillium chrysogenum* KF657, *Dendryphiella salina* LF304, *Halenospora varia* KF560, *Asteromyces cruciatus* LF680, *Tritirachium sp.* LF562, *Penicillium pinophilum* LF458, *Microascus brevicaulis* LF580, *Calcarisporium sp.* LF525 |
+| Medium | Verduyn minimal + 28 g/L Tropic Marin ASW, pH 4.25 |
+| Perturbation type | chemical (carbon source) |
+| Perturbation | glucose, xylose, galactose, glycerol (2 g/L each); no-carbon control |
+| Temperature | 24 °C |
+| Instruments | BioScreen C MBR (OD600, 100-well honeycomb, 30 min intervals) and Cytomat robot + DTX 880 (OD595, 96-well, ~2–3 h intervals) |
+| **Datasets** | **16** (8 species × 2 instruments) |
+| **Growth curves** | **~240** (~15 wells per dataset) |
+| Notes | First marine fungi dataset. Two parallel instruments allow cross-platform comparison. Note: inoculum contained ~0.22 g/L glycerol which may affect glycerol-condition interpretation. |
+
+---
+
+### 9 — Eisner et al. (2022) · *Myxococcus xanthus* rpoB growth fitness
+
+| Field | Value |
+|---|---|
+| Authors | Eisner SA, Velicer GJ, Yu YTN |
+| Year | 2022 |
+| Journal | Frontiers in Microbiology |
+| DOI | [10.3389/fmicb.2022.817080](https://doi.org/10.3389/fmicb.2022.817080) |
+| Species | *Myxococcus xanthus* |
+| Strains | GJV1 (wild-type DZ2 derivative), YTY2 (rpoB S534L mutant), YTY25 (rpoB S534L + Mxan_6547 wt) |
+| Medium | CTT (casitone-based) at varying casitone concentration |
+| Perturbation type | nutrient (casitone % in CTT) |
+| Perturbation | 0.2%, 0.5%, 1% casitone (w/v) |
+| Temperature | 32 °C |
+| Plate reader | TECAN Infinite M200 PRO, OD595, 48-well plates (Greiner Bio-One) |
+| Time-series | 300 cycles × ~6.3 min = 31.4 h |
+| **Datasets** | **1** (4 biological replicate plates) |
+| **Growth curves** | **~140** (~35 strain wells × 4 plates; blanks excluded) |
+| Notes | First *Myxococcus* dataset. Study identifies rpoB S534L as responsible for nutrient-threshold shift in fruiting body development. 4 replicate plates stored as one dataset with 4 plate IDs. Medium blanks (uninoculated CTT) stored with is_blank=TRUE for baseline subtraction. |
+
+---
+
 ## Not yet integrated
 
 | Publication | Species | Reason |
 |---|---|---|
 | Mustonen group (yeast) | *S. cerevisiae* | Integration in progress |
 | Bollenbach group (yeast) | *S. cerevisiae* | Integration in progress |
-| Holic group (yeast) | *S. cerevisiae* | Integration in progress |
+| Holic group (yeast) | *S. cerevisiae* | Integration in progress (parquet present, DB import pending) |
 
 ---
 

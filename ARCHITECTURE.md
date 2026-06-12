@@ -173,6 +173,15 @@ app.R  (single server + UI file, ~5700 lines)
   │   │                     DOI 10.1371/journal.pntd.0010876
   │   │                     · waithaka_import_rbsr()    → cell_count time-series (raw_measurement_registry)
   │   │                     · waithaka_import_puro_dr() → fluorescence dose-response (dose_response_registry)
+  │   ├── taylorcrooks_import.R Taylor & Crooks 2021 P. somerae KFU gentamicin (1 dataset)
+  │   │                     DOI 10.3389/fmicb.2021.674835
+  │   ├── tamminen_import.R Tamminen 2020 marine fungi import (16 datasets)
+  │   │                     DOI 10.1371/journal.pone.0236822
+  │   │                     · tamminen_import_bioscreen() → BioScreen C MBR (OD600, 30 min)
+  │   │                     · tamminen_import_cytomat()   → Cytomat+DTX 880 (OD595, ~2 h)
+  │   ├── eisner_import.R   Eisner 2022 M. xanthus rpoB growth (1 dataset, 4 bio-rep plates)
+  │   │                     DOI 10.3389/fmicb.2022.817080
+  │   │                     · eisner_import_growth()    → 4 plates, TECAN M200 PRO, OD595
   │   ├── biotek.R          BioTek raw format reader
   │   └── tecan.R           TECAN raw format reader
   │
@@ -362,6 +371,43 @@ Long-running plugin computations use `future_promise` to avoid blocking the UI:
 Results are cached with `bindCache(comp_all_raw(), ...)` keyed on the raw data
 and selected tools, so switching tabs or changing unrelated inputs does not
 re-trigger fitting.
+
+---
+
+## Naming conventions
+
+### Key identifiers
+
+| Identifier | Pattern | Example |
+|---|---|---|
+| `dataset_id` | `{author}_{year}_{organism_abbrev}_{context}` | `eisner_2022_mx_rpob` |
+| `plate_id` | `{dataset_id}__plate_{N}` | `eisner_2022_mx_rpob__plate_1` |
+| `well_id` | `{plate_id}__{well}` | `eisner_2022_mx_rpob__plate_1__A1` |
+| `well` | plate-reader well label or virtual name | `A1`, `ctrl_r1`, `R1` |
+
+The double-underscore `__` separator is chosen so that `plate_id` can be extracted from `well_id` by splitting on `__` and taking all but the last token.
+
+### Signal type vocabulary
+
+| `signal_type` | Physical measurement | `measurement_unit` |
+|---|---|---|
+| `OD600` | Optical density (approx. 600 nm, also used for 595 nm) | `OD` |
+| `OD750` | Optical density at 750 nm | `OD` |
+| `fluorescence` | Fluorescence intensity | `RFU` |
+| `luminescence` | Luminescence | `RLU` |
+| `CFU` | Colony-forming units | `CFU/ml` |
+| `cell_count` | Direct cell count (hemocytometer, flow cytometry) | `cells/ml` |
+
+**Rule:** datasets with different `signal_type` values cannot be combined in the same analysis — the y-axes are dimensionally incompatible.
+
+### Known naming inconsistencies (legacy, not yet fixed)
+
+| File | Issue |
+|---|---|
+| `generic_csv.R`, `logphase_reader.R` | `well_id = paste(dataset_id, plate_id, well, sep='__')` — redundantly includes `dataset_id` prefix |
+| `keio_import.R` (batch path) | Some `well_id` values built as `dataset_id__plate_1__R{rep_n}` instead of `plate_id__well` |
+
+These were imported before the convention was formalised. Fixing them would require rewriting all affected Parquet files and DB records. The inconsistency is contained (each dataset's IDs are still internally consistent) and does not affect query correctness.
 
 ---
 

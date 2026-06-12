@@ -4030,6 +4030,22 @@ server <- function(input, output, session) {
   comp_curves_data <- reactive({
     raw <- comp_all_raw()
     req(!is.null(raw) && nrow(raw) > 0)
+
+    # Guard: refuse to combine datasets with different signal types.
+    # OD600 + CFU or cell_count are dimensionally incompatible — the combined
+    # y-axis would be meaningless and plugin fits would be misleading.
+    if ('signal_type' %in% names(raw)) {
+      sig_types <- sort(unique(na.omit(raw$signal_type)))
+      sig_types <- sig_types[nzchar(sig_types)]
+      if (length(sig_types) > 1)
+        validate(need(FALSE, paste0(
+          "Incompatible measurement types selected: ",
+          paste(sig_types, collapse = " + "), ". ",
+          "Cannot combine ", paste(sig_types, collapse = ", "),
+          " data in the same analysis — the y-axes are dimensionally incompatible. ",
+          "Please select datasets that share the same signal type.")))
+    }
+
     bm           <- input$comp_curves_baseline %||% 'none'
     blank_names  <- input$comp_upload_blanks %||% character(0)
     blank_ids_db <- if (bm == 'blank_wells')
@@ -4060,10 +4076,81 @@ server <- function(input, output, session) {
     colour_col  <- if (multiplate && !per_plate) 'plate_label'
                    else if ('plot_label' %in% names(raw)) 'plot_label'
                    else 'dataset_id'
+
+    # ── Publication-ready title answering the 5 plot questions ────────────────
+    # Q1 What organism? Q2 What condition? Q3 What measurement?
+    # Q4 What preprocessing? Q5 What is one line/point?
+    .dvals <- function(col, df) {
+      if (!col %in% names(df)) return(character(0))
+      v <- sort(unique(na.omit(as.character(df[[col]]))))
+      v[nzchar(v) & v != 'NA']
+    }
+    meta <- tryCatch({
+      m <- comp_filtered_rv()
+      if (nrow(m) > 0 && 'dataset_id' %in% names(m))
+        m[m$dataset_id %in% comp_active_ids(), , drop = FALSE]
+      else m
+    }, error = function(e) data.frame())
+
+    abbrev_sp <- function(s) sub("^(\\S)\\S+ (\\S+).*$", "\\1. \\2", s)
+    sp_vec    <- .dvals('species', meta)
+    sp_lbl    <- switch(as.character(length(sp_vec)),
+      "0" = NULL, "1" = abbrev_sp(sp_vec),
+      paste(sapply(sp_vec, abbrev_sp), collapse = ", "))
+
+    med_vec   <- .dvals('medium_type', meta)
+    med_lbl   <- switch(as.character(length(med_vec)),
+      "0" = NULL, "1" = med_vec, paste0(length(med_vec), " media"))
+
+    tc_vec    <- suppressWarnings(sort(as.numeric(.dvals('temperature_c', meta))))
+    tc_vec    <- tc_vec[is.finite(tc_vec)]
+    tc_lbl    <- if (length(tc_vec) == 0) NULL
+                 else if (length(tc_vec) == 1) paste0(tc_vec, "°C")
+                 else paste0(min(tc_vec), "–", max(tc_vec), "°C")
+
+    pt_vec    <- .dvals('perturbation_type', meta)
+    pt_vec    <- pt_vec[!pt_vec %in% c('none', 'temperature', '')]
+    pt_lbl    <- if (length(pt_vec) == 0) NULL else paste(unique(pt_vec), collapse = "/")
+
+    title_parts <- Filter(Negate(is.null), list(sp_lbl, med_lbl, tc_lbl, pt_lbl))
+    plot_title  <- if (length(title_parts) > 0)
+                     paste(title_parts, collapse = " · ") else NULL
+
+    # Q3: measurement — signal_type is in Parquet; measurement_unit is in registry
+    # (not in the raw data frame), so fall back to meta for the unit label.
+    sig_types  <- sort(unique(na.omit(raw$signal_type)))
+    meas_units <- if ('measurement_unit' %in% names(raw) &&
+                      any(!is.na(raw$measurement_unit)))
+                    sort(unique(na.omit(raw$measurement_unit)))
+                  else .dvals('measurement_unit', meta)
+    meas_lbl   <- if (length(sig_types) > 0 && length(meas_units) > 0)
+                    paste0(sig_types[1], " [", meas_units[1], "]")
+                  else if (length(sig_types) > 0) sig_types[1] else NULL
+
+    # Q4: preprocessing
+    bm_used  <- input$comp_curves_baseline %||% 'none'
+    prep_lbl <- switch(bm_used,
+      none        = "no baseline correction",
+      min_well    = "min-per-well subtraction",
+      first3      = "first-3-timepoints baseline",
+      blank_wells = "blank-well subtraction",
+      bm_used)
+
+    # Q5: unit of observation
+    one_line <- if (length(comp_replicates_rv()) > 0) "1 line = 1 replicate group"
+                else "1 line = 1 well"
+
+    sub_parts     <- Filter(Negate(is.null), list(meas_lbl, prep_lbl, one_line))
+    plot_subtitle <- paste(sub_parts, collapse = " · ")
+    # ── end title block ────────────────────────────────────────────────────────
+
     p <- qres_plot_growth(raw, log_y = input$comp_log_y %||% FALSE,
                           colour_by     = colour_col,
                           control_wells = ctrl_well_ids,
-                          rep_groups    = comp_replicates_rv())
+                          rep_groups    = comp_replicates_rv(),
+                          title         = plot_title)
+    if (nzchar(plot_subtitle))
+      p <- p + ggplot2::labs(subtitle = plot_subtitle)
     if (per_plate) {
       lbls <- comp_plate_labels_rv()
       p <- p + ggplot2::facet_wrap(
@@ -4073,7 +4160,7 @@ server <- function(input, output, session) {
         else ggplot2::label_value)
     }
     p
-  }) |> bindCache(comp_curves_data(), input$comp_log_y,
+  }) |> bindCache(comp_curves_data(), input$comp_log_y, input$comp_curves_baseline,
                   input$comp_upload_controls, input$comp_plate_view,
                   comp_upload_n_plates(), length(comp_replicates_rv()))
 

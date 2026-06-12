@@ -243,7 +243,7 @@ KINBIONT_SYSIMAGE=path/to/image    # pre-compiled Julia sysimage (optional)
 
 ## Current datasets
 
-**8,868 datasets · 37,880 growth curves · 2 species**
+**8,890 datasets · ~38,300 growth curves · 13 species**
 
 | Publication | Species | Datasets | Curves |
 |---|---|---:|---:|
@@ -251,7 +251,11 @@ KINBIONT_SYSIMAGE=path/to/image    # pre-compiled Julia sysimage (optional)
 | Aida & Ying (2025) — chemically defined media | *E. coli* BW25113 | 1,029 | ~13,448 |
 | Katipoglu-Yazan et al. (2023) — temperature gradient | *E. coli* K12 NCM3722 | 20 | 960 |
 | Sao Emani C et al. / Baker B (2018) — genetic complements | *M. tuberculosis* CDC1551 | 1 | 18 |
+| Waithaka et al. (2022) — *T. brucei* RNAi growth + dose–response | *Trypanosoma brucei* | 2+2 | 12 |
+| Taylor & Crooks (2021) — gentamicin growth curves | *Porphyromonas somerae* KFU | 1 | 12 |
+| Tamminen et al. (2020) — marine fungi on 5 carbon sources | 8 filamentous marine fungi | 16 | ~240 |
+| Eisner et al. (2022) — rpoB mutation growth fitness | *Myxococcus xanthus* | 1 | ~140 |
 
 Full details including DOIs, data repositories, and quality notes: [PUBLICATIONS.md](PUBLICATIONS.md)
 
-Yeast datasets (*S. cerevisiae* — Mustonen, Bollenbach, Holic groups) — integration in progress.
+Yeast datasets (*S. cerevisiae* — Mustonton, Bollenbach, Holic groups) — integration in progress.
