@@ -158,7 +158,7 @@ number, the search matches both `well_metadata.perturbation` and
 | growthrates | R | mumax_percapita, lag_time_h | ✅ |
 | DGrowthR | R (GPR) | mumax_percapita, AUC | ✅ installed |
 | KinBiont.jl | Julia | mumax_percapita, lag_time_h | ⚠️ needs Julia 1.11 |
-| omniplate | Python | mumax_abs_od_per_h, AUC | ✅ via reticulate |
+| omniplate | Python | mumax_abs_od_per_h, AUC | ⚠️ not offered |
 
 All plugins receive **identically pre-processed data** (blank subtraction, same
 baseline method) to make comparisons honest.

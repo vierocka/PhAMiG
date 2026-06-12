@@ -91,11 +91,11 @@ ui_home <- fluidPage(
                      justify-content: center; gap: 24px; margin-bottom: 10px;
                      background: none; }
     .home-logo-row img { background: none; border: none; box-shadow: none; }
-    .home-title { font-size: 26px; font-weight: 700;
+    .home-title { font-size: 32px; font-weight: 700;
                   color: #1a3a5c; margin: 0 0 10px; }
-    .home-tagline { color: #444; font-size: 15px;
+    .home-tagline { color: #444; font-size: 19px;
                     max-width: 640px; margin: 0 auto 6px; }
-    .home-abbrev  { color: #888; font-size: 12px;
+    .home-abbrev  { color: #888; font-size: 15px;
                     max-width: 500px; margin: 0 auto 28px; line-height: 1.7; }
 
     /* ── Primary action cards ── */
@@ -103,7 +103,7 @@ ui_home <- fluidPage(
                     gap: 20px; flex-wrap: wrap; margin-bottom: 10px; }
     .home-card {
       display: flex; flex-direction: column; align-items: center;
-      width: 190px; padding: 22px 16px 18px;
+      width: 230px; padding: 22px 16px 18px;
       background: #fff; border: 1px solid #d0dce8;
       border-radius: 10px; text-decoration: none; color: #1a3a5c;
       box-shadow: 0 2px 6px rgba(0,0,0,.07);
@@ -114,9 +114,9 @@ ui_home <- fluidPage(
       transform: translateY(-3px); border-color: #2980b9;
       text-decoration: none; color: #1a3a5c;
     }
-    .home-card img { width: 100px; height: 100px; margin-bottom: 12px; }
-    .home-card-label { font-weight: 700; font-size: 15px; margin-bottom: 4px; }
-    .home-card-sub   { color: #888; font-size: 12px; text-align: center; }
+    .home-card img { width: 150px; height: 150px; margin-bottom: 12px; }
+    .home-card-label { font-weight: 700; font-size: 19px; margin-bottom: 4px; }
+    .home-card-sub   { color: #888; font-size: 15px; text-align: center; }
 
     /* ── Secondary nav links ── */
     .home-secondary {
@@ -129,20 +129,31 @@ ui_home <- fluidPage(
       transition: color .15s;
     }
     .home-sec-link:hover { color: #2980b9; text-decoration: none; }
-    .home-sec-link img { width: 52px; height: 52px;
+    .home-sec-link img { width: 65px; height: 65px;
                          margin-bottom: 5px; opacity: .75; }
     .home-sec-link:hover img { opacity: 1; }
-    .home-sec-label { font-size: 12px; font-weight: 600;
+    .home-sec-label { font-size: 15px; font-weight: 600;
                       text-align: center; max-width: 90px; }
+
+    /* ── Stats bar ── */
+    .home-stats-bar {
+      display: flex; justify-content: center; gap: 40px; flex-wrap: wrap;
+      margin: 18px auto 6px; padding: 14px 28px;
+      background: #f0f6ff; border-radius: 10px; max-width: 700px;
+    }
+    .home-stat { display: flex; flex-direction: column; align-items: center; }
+    .home-stat-n { font-size: 22px; font-weight: 700; color: #1a3a5c; }
+    .home-stat-label { font-size: 12px; color: #666;
+                       text-transform: uppercase; letter-spacing: .04em; }
   "))),
 
   tags$div(class = 'home-hero',
 
     # ── Logos + title ──────────────────────────────────────────────────────
     tags$div(class = 'home-logo-row',
-      img(src = 'PhaMiG_logo.png',  height = '90px', alt = 'PhaMiG logo',
+      img(src = 'PhaMiG_logo.png',  height = '112px', alt = 'PhaMiG logo',
           style = 'display:block;'),
-      img(src = 'QresDB_logo.png',  height = '90px', alt = 'Qres DB logo',
+      img(src = 'QresDB_logo.png',  height = '112px', alt = 'Qres DB logo',
           style = 'display:block;')
     ),
 
@@ -151,7 +162,7 @@ ui_home <- fluidPage(
       ' Powered by Qres DB')),
 
     tags$p(class = 'home-tagline',
-      'A repository for microbial growth curves with integrated analysis and benchmarking tools.'),
+      'Repository and benchmarking platform for quantitative microbial growth analysis.'),
 
     tags$p(class = 'home-abbrev',
       tags$strong('PhaMiG'), HTML(' &ndash; Phenotypic Analysis of Microbial Growth'),
@@ -163,20 +174,23 @@ ui_home <- fluidPage(
     tags$div(class = 'home-primary',
       tags$a(class = 'home-card', href = route_link('search'),
         img(src = 'search_parse2.png', alt = 'Search'),
-        tags$span(class = 'home-card-label', 'Search Data'),
+        tags$span(class = 'home-card-label', 'Search'),
         tags$span(class = 'home-card-sub',   'Find existing datasets.')
       ),
       tags$a(class = 'home-card', href = route_link('submit'),
         img(src = 'submit2.png', alt = 'Submit'),
-        tags$span(class = 'home-card-label', 'Submit Data'),
+        tags$span(class = 'home-card-label', 'Submit'),
         tags$span(class = 'home-card-sub',   'Deposit new datasets.')
       ),
       tags$a(class = 'home-card', href = route_link('analyse'),
         img(src = 'data_analysis2.png', alt = 'Analyze'),
-        tags$span(class = 'home-card-label', 'Analyze Data'),
+        tags$span(class = 'home-card-label', 'Analyze'),
         tags$span(class = 'home-card-sub',   'Analyze uploaded growth curves.')
       )
     ),
+
+    # ── Live stats bar ─────────────────────────────────────────────────────
+    uiOutput('home_stats_bar'),
 
     # ── Secondary nav ──────────────────────────────────────────────────────
     tags$div(class = 'home-secondary',
@@ -186,7 +200,7 @@ ui_home <- fluidPage(
       ),
       tags$a(class = 'home-sec-link', href = route_link('ask'),
         img(src = 'contact2.png', alt = 'Natural Language Query'),
-        tags$span(class = 'home-sec-label', 'Natural Language Query')
+        tags$span(class = 'home-sec-label', 'Ask Qres DB')
       ),
       tags$a(class = 'home-sec-link', href = route_link('plugins'),
         img(src = 'project_development2.png', alt = 'Learn'),
@@ -490,20 +504,67 @@ ui_search <- fluidPage(
       .dataTables_wrapper { overflow-x: auto; }
       table.dataTable td { white-space: nowrap; }
 
-      /* Search hero */
-      .search-hero { max-width: 680px; margin: 0 auto 4px; text-align: center; }
-      .search-hero .form-group { margin-bottom: 4px; }
-      .search-hero .form-control {
-        font-size: 16px; height: 48px; border-radius: 8px;
-        border: 2px solid #c0d4e8; padding: 10px 16px;
+      /* ── Google-style search page ─────────────────────────────────────── */
+      .search-page-wrap {
+        display: flex; flex-direction: column;
+        min-height: calc(100vh - 130px);
       }
-      .search-hero .form-control:focus { border-color: #2980b9; box-shadow: none; }
-      .search-examples { color: #777; font-size: 13px; margin: 2px 0 10px; }
+
+      /* Hero: vertically centred when no results are shown */
+      #search-hero-section {
+        display: flex; flex-direction: column;
+        align-items: center; justify-content: center;
+        flex: 1 0 220px;
+        padding: 7vh 16px 24px;
+        transition: padding .22s ease, flex .22s ease;
+      }
+      #search-hero-section.compact {
+        flex: 0 0 auto;
+        padding: 14px 16px 10px;
+        border-bottom: 1px solid #dde4eb;
+        margin-bottom: 18px;
+      }
+
+      /* Logos */
+      .search-logo-wrap { margin-bottom: 28px; text-align: center; }
+      #search-hero-section.compact .search-logo-wrap { margin-bottom: 8px; }
+      #search-hero-section.compact .search-logo-wrap img { height: 36px; }
+
+      /* Search input */
+      .search-hero { width: 100%; max-width: 620px; text-align: center; }
+      .search-hero .form-group { margin-bottom: 6px; }
+      .search-hero .form-control {
+        font-size: 16px; height: 50px;
+        border-radius: 24px;
+        border: 1px solid #dfe1e5;
+        padding: 10px 20px;
+        box-shadow: 0 1px 6px rgba(32,33,36,.13);
+        transition: box-shadow .18s;
+      }
+      .search-hero .form-control:focus,
+      .search-hero .form-control:hover {
+        box-shadow: 0 1px 14px rgba(32,33,36,.22);
+        border-color: transparent; outline: none;
+      }
+      #search-hero-section.compact .search-hero .form-control {
+        height: 38px; font-size: 14px; border-radius: 18px; padding: 6px 16px;
+        box-shadow: 0 1px 4px rgba(32,33,36,.10);
+      }
+
+      /* Examples */
+      .search-examples { color: #888; font-size: 12px; margin: 6px 0 14px; }
       .search-examples a { cursor: pointer; color: #2980b9; text-decoration: none; }
       .search-examples a:hover { text-decoration: underline; }
+      #search-hero-section.compact .search-examples { display: none; }
 
-      /* Result bar */
-      .result-count { font-size: 15px; font-weight: 600; color: #1a3a5c; margin: 10px 0 6px; }
+      /* No-results notice */
+      .search-no-results {
+        color: dimgray; font-size: 14px; text-align: center;
+        margin-top: 18px; font-style: italic;
+      }
+
+      /* Result header */
+      .result-count { font-size: 15px; font-weight: 600; color: #1a3a5c; margin: 0 0 6px; }
 
       /* Facets */
       .facet-panel { font-size: 13px; color: #333; }
@@ -552,126 +613,145 @@ ui_search <- fluidPage(
           if (btn) btn.click();
         }, 80);
       }
+      Shiny.addCustomMessageHandler('searchStateChange', function(msg) {
+        var hero = document.getElementById('search-hero-section');
+        if (!hero) return;
+        hero.classList.toggle('compact', msg.hasResults);
+      });
+      $(document).on('keydown', '#search', function(e) {
+        if (e.key === 'Enter') {
+          e.preventDefault();
+          var btn = document.getElementById('run_search');
+          if (btn) btn.click();
+        }
+      });
     "))
   ),
 
-  # ── Header ──────────────────────────────────────────────────────────────────
-  fluidRow(
-    column(5, align = 'left',
-      img(src = 'PhaMiG_logo.png', height = '52px', alt = 'PhaMiG',
-          style = 'margin-right:8px;'),
-      img(src = 'QresDB_logo.png', height = '52px', alt = 'Qres DB')
-    ),
-    column(7, align = 'right',
-      br(),
-      actionButton('init_db', tagList(icon('database'), ' Initialize / refresh DB'),
-                   class = 'btn-default btn-sm',
-                   title = 'Scans data/raw_csv/ and data/metaData.csv and registers them in DuckDB.')
-    )
-  ),
-  hr(),
+  tags$div(class = 'search-page-wrap',
 
-  # ── Search hero ─────────────────────────────────────────────────────────────
-  tags$div(class = 'search-hero',
-    tags$div(style = 'display:flex; align-items:flex-end; gap:6px;',
-      tags$div(style = 'flex:1;',
-        textInput('search', label = NULL,
-                  placeholder = 'Search microbial growth datasets…',
-                  width = '100%')
+    # ── Hero: logos + search box (always visible, compacts when results appear) ──
+    tags$div(id = 'search-hero-section',
+
+      tags$div(class = 'search-logo-wrap',
+        img(src = 'PhaMiG_logo.png', height = '52px', alt = 'PhaMiG',
+            style = 'margin-right:8px;'),
+        img(src = 'QresDB_logo.png', height = '52px', alt = 'Qres DB')
       ),
-      actionButton('clear_search', icon('times'),
-                   class = 'btn-default',
-                   title = 'Clear search and show all datasets',
-                   style = 'height:48px; margin-bottom:15px; flex-shrink:0;')
-    ),
-    tags$div(class = 'search-examples',
-      'Examples: ',
-      tags$a(onclick = "fillSearch('E. coli 37°C')", 'E. coli 37°C'), '  |  ',
-      tags$a(onclick = "fillSearch('Bacillus subtilis tetracycline')", 'Bacillus subtilis tetracycline'), '  |  ',
-      tags$a(onclick = "fillSearch('yeast ethanol stress')",            'yeast ethanol stress')
-    ),
-    fluidRow(column(6, offset = 3,
-      actionButton('run_search', tagList(icon('search'), ' Search'),
-                   class = 'btn-primary btn-lg', width = '100%')
-    ))
-  ),
 
-  br(),
-
-  # ── Result count ─────────────────────────────────────────────────────────────
-  fluidRow(
-    column(12, uiOutput('search_result_bar'))
-  ),
-
-  # ── Two-column: facets + table ───────────────────────────────────────────────
-  fluidRow(
-
-    # ── Left: facets + advanced filters ───────────────────────────────────────
-    column(3,
-      uiOutput('search_facets'),
-      br(),
-      tags$details(
-        tags$summary('Advanced filters'),
-        tags$div(class = 'adv-section',
-          tags$span(class = 'adv-group-label', 'Biology'),
-          textInput('adv_species',      'Species',     placeholder = 'e.g. Escherichia coli', width = '100%'),
-          textInput('adv_strain',       'Strain',      placeholder = 'e.g. K-12',             width = '100%'),
-          textInput('adv_medium',       'Medium',      placeholder = 'e.g. LB, M9',           width = '100%'),
-          fluidRow(
-            column(6, numericInput('adv_temp_min', 'Temp min °C', value = NA, step = 1)),
-            column(6, numericInput('adv_temp_max', 'Temp max °C', value = NA, step = 1))
+      tags$div(class = 'search-hero',
+        tags$div(style = 'display:flex; align-items:flex-end; gap:6px;',
+          tags$div(style = 'flex:1;',
+            textInput('search', label = NULL,
+                      placeholder = 'Search microbial growth datasets…',
+                      width = '100%')
           ),
-          selectInput('adv_perturb_type', 'Perturbation type',
-            choices = c('(all)' = '', 'chemical', 'genetic', 'temperature', 'none'),
-            width = '100%'),
-          textInput('adv_perturb', 'Perturbation', placeholder = 'e.g. rifampicin', width = '100%'),
-          tags$hr(style = 'margin:4px 0;'),
-          tags$span(class = 'adv-group-label', 'Experimental'),
-          textInput('adv_plate_reader', 'Plate reader', placeholder = 'e.g. Biotek', width = '100%'),
-          tags$hr(style = 'margin:4px 0;'),
-          tags$span(class = 'adv-group-label', 'Publication'),
-          textInput('adv_author',   'Author',   placeholder = 'e.g. Bollenbach',   width = '100%'),
-          fluidRow(
-            column(6, numericInput('adv_year_min', 'From year', value = NA, min = 1950, max = 2035, step = 1)),
-            column(6, numericInput('adv_year_max', 'To year',   value = NA, min = 1950, max = 2035, step = 1))
-          ),
-          textInput('adv_doi', 'DOI', placeholder = 'e.g. 10.1038/…', width = '100%'),
-          br(),
-          actionButton('adv_clear', 'Clear all filters', class = 'btn-default btn-xs btn-block')
-        )
+          actionButton('clear_search', icon('times'),
+                       class = 'btn-default',
+                       title = 'Clear and return to start',
+                       style = 'height:50px; margin-bottom:15px; flex-shrink:0; border-radius:50%;')
+        ),
+        tags$div(class = 'search-examples',
+          'Try: ',
+          tags$a(onclick = "fillSearch('E. coli 37°C')",                    'E. coli 37°C'), '  ·  ',
+          tags$a(onclick = "fillSearch('Bacillus subtilis tetracycline')",   'Bacillus tetracycline'), '  ·  ',
+          tags$a(onclick = "fillSearch('yeast ethanol stress')",             'yeast ethanol')
+        ),
+        fluidRow(column(6, offset = 3,
+          actionButton('run_search', tagList(icon('search'), ' Search'),
+                       class = 'btn-primary btn-lg', width = '100%')
+        ))
+      ),
+
+      # Shown after a search that returned nothing
+      conditionalPanel(
+        condition = 'output.search_performed_flag === true && output.search_has_results === false',
+        tags$p(class = 'search-no-results',
+               'No datasets found for the given criteria.')
       )
     ),
 
-    # ── Right: table + actions + detail panel ──────────────────────────────────
-    column(9,
-      DTOutput('dataset_table'),
-      br(),
+    # ── Results (only when search returned matches) ──────────────────────────
+    conditionalPanel(
+      condition = 'output.search_has_results === true',
+
       fluidRow(
-        column(6, uiOutput('analyze_data_btn_ui')),
-        column(6, align = 'right', uiOutput('download_search_ui'))
+        column(12, uiOutput('search_result_bar'))
       ),
-      # Per-dataset detail (shown when a row is selected)
-      conditionalPanel('output.has_selected_dataset',
-        tags$div(class = 'dataset-detail',
-          # Shared dataset picker — drives both Links and QC tabs
-          uiOutput('detail_selector_ui'),
-          tabsetPanel(id = 'datasetDetailTabs',
-            tabPanel('Links',
+
+      fluidRow(
+
+        # Left: facets + advanced filters
+        column(3,
+          uiOutput('search_facets'),
+          br(),
+          tags$details(
+            tags$summary('Advanced filters'),
+            tags$div(class = 'adv-section',
+              tags$span(class = 'adv-group-label', 'Biology'),
+              textInput('adv_species',  'Species',  placeholder = 'e.g. Escherichia coli', width = '100%'),
+              textInput('adv_strain',   'Strain',   placeholder = 'e.g. K-12',             width = '100%'),
+              textInput('adv_medium',   'Medium',   placeholder = 'e.g. LB, M9',           width = '100%'),
+              fluidRow(
+                column(6, numericInput('adv_temp_min', 'Temp min °C', value = NA, step = 1)),
+                column(6, numericInput('adv_temp_max', 'Temp max °C', value = NA, step = 1))
+              ),
+              selectInput('adv_perturb_type', 'Perturbation type',
+                choices = c('(all)' = '', 'chemical', 'genetic', 'temperature', 'none'),
+                width = '100%'),
+              textInput('adv_perturb', 'Perturbation', placeholder = 'e.g. rifampicin', width = '100%'),
+              tags$hr(style = 'margin:4px 0;'),
+              tags$span(class = 'adv-group-label', 'Experimental'),
+              textInput('adv_plate_reader', 'Plate reader', placeholder = 'e.g. Biotek', width = '100%'),
+              tags$hr(style = 'margin:4px 0;'),
+              tags$span(class = 'adv-group-label', 'Publication'),
+              textInput('adv_author', 'Author', placeholder = 'e.g. Bollenbach', width = '100%'),
+              fluidRow(
+                column(6, numericInput('adv_year_min', 'From year', value = NA, min = 1950, max = 2035, step = 1)),
+                column(6, numericInput('adv_year_max', 'To year',   value = NA, min = 1950, max = 2035, step = 1))
+              ),
+              textInput('adv_doi', 'DOI', placeholder = 'e.g. 10.1038/…', width = '100%'),
               br(),
-              uiOutput('ncbi_link_box'),
-              uiOutput('doi_link_box')
-            ),
-            tabPanel('QC',
-              br(),
-              plotOutput('qc_cv_plot',      height = '260px'),
-              br(),
-              plotOutput('qc_heatmap_plot', height = '260px')
+              actionButton('adv_clear', 'Clear all filters', class = 'btn-default btn-xs btn-block'),
+              tags$hr(style = 'margin:8px 0;'),
+              actionButton('init_db', tagList(icon('database'), ' Initialize / refresh DB'),
+                           class = 'btn-default btn-xs btn-block',
+                           title = 'Scans data/raw_csv/ and data/metaData.csv and registers them in DuckDB.')
+            )
+          )
+        ),
+
+        # Right: table + actions + detail panel
+        column(9,
+          DTOutput('dataset_table'),
+          br(),
+          fluidRow(
+            column(6, uiOutput('analyze_data_btn_ui')),
+            column(6, align = 'right', uiOutput('download_search_ui'))
+          ),
+          conditionalPanel('output.has_selected_dataset',
+            tags$div(class = 'dataset-detail',
+              uiOutput('detail_selector_ui'),
+              tabsetPanel(id = 'datasetDetailTabs',
+                tabPanel('Links',
+                  br(),
+                  uiOutput('ncbi_link_box'),
+                  uiOutput('doi_link_box')
+                ),
+                tabPanel('QC',
+                  br(),
+                  plotOutput('qc_cv_plot',      height = '260px'),
+                  br(),
+                  plotOutput('qc_heatmap_plot', height = '260px')
+                )
+              )
             )
           )
         )
       )
     )
-  ),
+
+  ), # end search-page-wrap
 
   bottom_nav
 )
@@ -767,6 +847,7 @@ ui_analyse <- fluidPage(
       tags$div(class = 'ac-sub',   'Combine upload with DB datasets')
     )
   ),
+
 
   uiOutput('analyse_main_panel'),
   bottom_nav
@@ -1428,9 +1509,48 @@ server <- function(input, output, session) {
   con <- qres_connect('data/qres.duckdb')
   onStop(function() qres_disconnect(con))
 
+  # ── Home page live stats ────────────────────────────────────────────────────
+  output$home_stats_bar <- renderUI({
+    fmt <- function(n) formatC(as.integer(n), format = 'd', big.mark = ',')
+    stats <- tryCatch(list(
+      datasets = DBI::dbGetQuery(con,
+        "SELECT COUNT(DISTINCT d.dataset_id) AS n
+         FROM dataset d
+         JOIN raw_measurement_registry rmr USING(dataset_id)
+         LEFT JOIN upload_embargo ue USING(dataset_id)
+         WHERE (ue.released = TRUE OR ue.dataset_id IS NULL)")$n,
+      species  = DBI::dbGetQuery(con,
+        "SELECT COUNT(DISTINCT w.species) AS n
+         FROM well_metadata w
+         JOIN plate p USING(plate_id)
+         JOIN raw_measurement_registry rmr USING(dataset_id)
+         LEFT JOIN upload_embargo ue USING(dataset_id)
+         WHERE w.species IS NOT NULL AND trim(w.species) != ''
+           AND (ue.released = TRUE OR ue.dataset_id IS NULL)")$n,
+      curves   = DBI::dbGetQuery(con,
+        "SELECT COALESCE(SUM(n_wells), 0) AS n
+         FROM raw_measurement_registry rmr
+         LEFT JOIN upload_embargo ue USING(dataset_id)
+         WHERE (ue.released = TRUE OR ue.dataset_id IS NULL)")$n,
+      tools    = 5L   # supported analysis plugins: model_free, gcplyr, growthrates, DGrowthR, KinBiont
+    ), error = function(e) NULL)
+    if (is.null(stats)) return(NULL)
+    .stat <- function(n, lbl)
+      tags$div(class = 'home-stat',
+        tags$span(class = 'home-stat-n',     fmt(n)),
+        tags$span(class = 'home-stat-label', lbl))
+    tags$div(class = 'home-stats-bar',
+      .stat(stats$datasets, 'Datasets'),
+      .stat(stats$species,  'Species'),
+      .stat(stats$curves,   'Growth curves'),
+      .stat(stats$tools,    'Tools benchmarked')
+    )
+  })
+
   selected_dataset     <- reactiveVal(NULL)
   detail_dataset_id    <- reactiveVal(NULL)   # which of the selected datasets to show in Links / QC
   dataset_results      <- reactiveVal(data.frame())
+  search_performed     <- reactiveVal(FALSE)  # TRUE once user hits Search; drives hero ↔ results toggle
   comp_filtered_rv     <- reactiveVal(data.frame())
   comp_upload_rv         <- reactiveVal(NULL)
   comp_upload_valid      <- reactiveVal(FALSE)
@@ -1560,16 +1680,27 @@ server <- function(input, output, session) {
   # Show which LLM backend is active (none = rule-based only, no key needed)
   # Result count bar
   output$search_result_bar <- renderUI({
+    if (!search_performed()) return(NULL)
     n_all <- nrow(dataset_results())
     n_dis <- nrow(display_results())
-    if (n_all == 0)
-      return(tags$p(class = 'result-count', style = 'color:#999;',
-                    'No datasets found. Click "Initialize / refresh DB" above.'))
-    lbl <- if (n_dis == n_all)
-      sprintf('%d dataset%s found', n_all, if (n_all == 1) '' else 's')
+    if (n_dis == 0) return(NULL)  # no-results message shown in the hero section
+
+    # "Repository overview" when no active text query and all datasets are shown.
+    # "X datasets found" / "X of Y" when a filter is in effect.
+    q_active <- nzchar(trimws(input$search %||% ''))
+    adv_active <- any(nzchar(c(
+      input$adv_species %||% '', input$adv_strain %||% '', input$adv_medium %||% '',
+      input$adv_perturb %||% '', input$adv_author %||% '', input$adv_doi %||% ''
+    ))) || !is.na(input$adv_temp_min) || !is.na(input$adv_temp_max) ||
+           nzchar(input$adv_perturb_type %||% '')
+
+    lbl <- if (!q_active && !adv_active && n_dis == n_all)
+      sprintf('Repository overview — %d dataset%s', n_all, if (n_all == 1) '' else 's')
+    else if (n_dis == n_all)
+      sprintf('%d dataset%s found', n_dis, if (n_dis == 1) '' else 's')
     else
-      sprintf('%d of %d dataset%s (filters active)',
-              n_dis, n_all, if (n_all == 1) '' else 's')
+      sprintf('%d of %d dataset%s match', n_dis, n_all, if (n_dis == 1) '' else 's')
+
     tags$p(class = 'result-count', lbl)
   })
 
@@ -1578,14 +1709,19 @@ server <- function(input, output, session) {
     df <- display_results()
     if (nrow(df) == 0) return(NULL)
 
-    # Generic block: title (total), top-2 visible, rest behind toggle
-    .block <- function(title, vals) {
+    # Generic block: title (total), top-2 visible, rest behind toggle.
+    # Counts unique dataset_ids per term so JOIN-multiplied rows don't inflate counts.
+    .block <- function(title, vals, ids = df$dataset_id) {
       vals <- as.character(vals)
-      vals <- vals[!is.na(vals) & nzchar(vals) & vals != 'NA']
+      ok   <- !is.na(vals) & nzchar(vals) & vals != 'NA'
+      vals <- vals[ok]
+      ids  <- ids[ok]
       if (length(vals) == 0) return(NULL)
-      counts  <- sort(table(vals), decreasing = TRUE)
-      n       <- length(counts)
-      total   <- sum(counts)
+      counts <- sort(
+        sapply(split(ids, vals), function(x) length(unique(x))),
+        decreasing = TRUE)
+      n     <- length(counts)   # unique terms in this facet category
+      total <- n                # header shows: how many distinct values exist
       uid     <- paste0('facet_more_', tolower(gsub('[^a-z0-9]', '', title)))
 
       make_row <- function(i)
@@ -1624,7 +1760,9 @@ server <- function(input, output, session) {
     # Perturbation: 4 fixed subgroups (chemical / genetic / temperature / none)
     .block_perturbation <- function(df) {
       if (!'perturbation_type' %in% names(df)) return(NULL)
-      total <- sum(!is.na(df$perturbation_type) & nzchar(df$perturbation_type))
+      ok_pt  <- !is.na(df$perturbation_type) & nzchar(df$perturbation_type)
+      # Header shows number of distinct perturbation types present (e.g. 2 for Chemical + Temperature)
+      total  <- length(unique(df$perturbation_type[ok_pt]))
       if (total == 0) return(NULL)
 
       subgroup_labels <- c(chemical = 'Chemical', genetic = 'Genetic',
@@ -1632,14 +1770,17 @@ server <- function(input, output, session) {
       sub_blocks <- lapply(names(subgroup_labels), function(ptype) {
         sub_df <- df[!is.na(df$perturbation_type) & df$perturbation_type == ptype, ]
         if (nrow(sub_df) == 0) return(NULL)
-        n_sub <- nrow(sub_df)
+        n_sub <- length(unique(sub_df$dataset_id))
         uid   <- paste0('facet_perturb_', ptype)
 
         pvals  <- as.character(sub_df$perturbation %||% '')
-        pvals  <- pvals[!is.na(pvals) & nzchar(pvals) & !pvals %in% c('NA','none','None')]
-        ex     <- if (length(pvals) > 0) names(sort(table(pvals), decreasing = TRUE))[1] else NULL
+        pids   <- sub_df$dataset_id
+        ok_p   <- !is.na(pvals) & nzchar(pvals) & !pvals %in% c('NA','none','None')
+        pvals  <- pvals[ok_p]; pids <- pids[ok_p]
+        ex     <- if (length(pvals) > 0)
+          names(sort(sapply(split(pids, pvals), function(x) length(unique(x))), decreasing = TRUE))[1] else NULL
         all_rows <- if (length(pvals) > 0) {
-          ct <- sort(table(pvals), decreasing = TRUE)
+          ct <- sort(sapply(split(pids, pvals), function(x) length(unique(x))), decreasing = TRUE)
           lapply(seq_along(ct), function(i)
             tags$div(class = 'facet-row', style = 'padding-left:14px; font-size:12px;',
               tags$span(names(ct)[i]),
@@ -1674,26 +1815,32 @@ server <- function(input, output, session) {
         tags$hr(style = 'margin:5px 0;'))
     }
 
-    # Authors: "Last et al." when >1 author (≥2 commas or ; separator)
-    auth_raw <- as.character(df$authors %||% '')
-    short_auth <- ifelse(
-      grepl(';', auth_raw, fixed = TRUE) | nchar(gsub('[^,]', '', auth_raw)) >= 2,
-      paste0(trimws(sub(',.*', '', auth_raw)), ' et al.'),
-      auth_raw   # single author already title-cased by display_results()
-    )
-
     tags$div(class = 'facet-panel',
       .block('Species',     df$species),
       .block_perturbation(df),
       .block('Temperature', paste0(df$temperature_c, '°C')),
-      .block('Medium',      df$medium_type),
-      .block('Authors',     short_auth)
+      .block('Medium',      df$medium_type)
     )
   })
 
   # Controls conditional detail panel visibility
   output$has_selected_dataset <- reactive({ !is.null(selected_dataset()) })
   outputOptions(output, 'has_selected_dataset', suspendWhenHidden = FALSE)
+
+  # Drive search hero ↔ results layout toggle
+  output$search_performed_flag <- reactive({ isTRUE(search_performed()) })
+  outputOptions(output, 'search_performed_flag', suspendWhenHidden = FALSE)
+
+  output$search_has_results <- reactive({
+    isTRUE(search_performed()) && nrow(display_results()) > 0
+  })
+  outputOptions(output, 'search_has_results', suspendWhenHidden = FALSE)
+
+  # Send hero compact/expand state to JS whenever results state changes
+  observe({
+    session$sendCustomMessage('searchStateChange',
+      list(hasResults = isTRUE(search_performed()) && nrow(display_results()) > 0))
+  })
 
   # Clear all advanced filter fields
   observeEvent(input$adv_clear, {
@@ -1713,11 +1860,18 @@ server <- function(input, output, session) {
 
   observeEvent(input$clear_search, {
     updateTextInput(session, 'search', value = '')
-    dataset_results(tryCatch(qres_search_datasets(con), error = function(e) data.frame()))
+    search_performed(FALSE)
     selected_dataset(NULL)
     detail_dataset_id(NULL)
-    DT::dataTableProxy('dataset_table') |> DT::selectRows(NULL)
   })
+
+  observeEvent(input$search, {
+    if (!nzchar(trimws(input$search %||% ''))) {
+      search_performed(FALSE)
+      selected_dataset(NULL)
+      detail_dataset_id(NULL)
+    }
+  }, ignoreInit = TRUE)
 
   observeEvent(input$run_search, {
     qres_init_schema(con)
@@ -1804,6 +1958,7 @@ server <- function(input, output, session) {
     }
 
     dataset_results(result_rows %||% data.frame())
+    search_performed(TRUE)
     if (!is.null(notify_msg)) showNotification(notify_msg, type = 'message', duration = 4)
   }, ignoreInit = TRUE)
 
@@ -2074,27 +2229,33 @@ server <- function(input, output, session) {
     req(detail_dataset_id())
     wm <- tryCatch(
       DBI::dbGetQuery(con,
-        "SELECT DISTINCT species, taxon_id FROM well_metadata WHERE plate_id LIKE ? LIMIT 1",
+        "SELECT DISTINCT species, strain, taxon_id FROM well_metadata WHERE plate_id LIKE ? LIMIT 1",
         params = list(paste0(detail_dataset_id(), '%'))),
       error = function(e) NULL
     )
     if (is.null(wm) || nrow(wm) == 0) return(NULL)
     taxon_id <- wm$taxon_id[1]
     species  <- wm$species[1]
+    strain   <- wm$strain[1]
+    strain_clean  <- trimws(strain %||% '')
+    strain_first  <- if (nzchar(strain_clean)) strsplit(strain_clean, '\\s+')[[1]][1] else ''
+    # Display label uses full strain; search term uses only first strain word (avoids NCBI misses)
+    org_label     <- if (nzchar(strain_clean)) paste(species, strain_clean) else species
+    search_term   <- if (nzchar(strain_first)) paste(species, strain_first) else species
     if (!is.na(taxon_id) && nzchar(taxon_id) && !taxon_id %in% c('undefined', 'NA')) {
       ncbi_url <- paste0('https://www.ncbi.nlm.nih.gov/Taxonomy/Browser/wwwtax.cgi?id=', taxon_id)
       tags$div(class = 'alert alert-info',
         tags$strong('NCBI Taxonomy: '),
-        tags$em(species), ' — ',
+        tags$em(org_label), ' — ',
         tags$a(href = ncbi_url, target = '_blank', paste0('TaxID ', taxon_id, ' ↗'))
       )
     } else if (!is.na(species) && nzchar(species)) {
       search_url <- paste0('https://www.ncbi.nlm.nih.gov/taxonomy/?term=',
-                           utils::URLencode(species))
+                           utils::URLencode(search_term))
       tags$div(class = 'alert alert-warning',
         tags$strong('No NCBI TaxID stored. '),
         'Search NCBI: ',
-        tags$a(href = search_url, target = '_blank', paste0(species, ' ↗'))
+        tags$a(href = search_url, target = '_blank', paste0(org_label, ' ↗'))
       )
     }
   })
@@ -2984,7 +3145,10 @@ server <- function(input, output, session) {
       comp_upload_valid(TRUE)
       comp_upload_n_plates(n_sheets)
       # Store plate_id → original sheet name for per-plate facet labels
-      pids <- sort(unique(long$plate_id))
+      # Sort plate_ids numerically by the trailing integer so Sheet N → Plate N is correct
+      # even for 10+ sheets (lexicographic sort would misplace plate_10 before plate_2).
+      pids <- unique(long$plate_id)
+      pids <- pids[order(as.integer(sub('.*__plate_', '', pids)))]
       comp_plate_labels_rv(setNames(sheet_names[seq_along(pids)], pids))
     } else {
       # Single plate: CSV or single-sheet Excel
@@ -3584,10 +3748,11 @@ server <- function(input, output, session) {
   output$comp_curves <- renderPlot({
     raw           <- comp_curves_data()
     ctrl_well_ids <- raw$well_id[raw$well %in% (input$comp_upload_controls %||% character(0))]
-    multiplate  <- isTRUE(comp_upload_n_plates() > 1L)
+    # Derive multiplate from the data so this is immune to reactiveVal timing races.
+    # plate_label is guaranteed present and correct inside comp_curves_data().
+    multiplate  <- 'plate_label' %in% names(raw) && length(unique(raw$plate_label)) > 1L
     per_plate   <- multiplate && (input$comp_plate_view %||% 'together') == 'per_plate'
-    colour_col  <- if (multiplate && !per_plate && 'plate_label' %in% names(raw))
-                     'plate_label'
+    colour_col  <- if (multiplate && !per_plate) 'plate_label'
                    else if ('plot_label' %in% names(raw)) 'plot_label'
                    else 'dataset_id'
     p <- qres_plot_growth(raw, log_y = input$comp_log_y %||% FALSE,
@@ -3605,7 +3770,7 @@ server <- function(input, output, session) {
     p
   }) |> bindCache(comp_curves_data(), input$comp_log_y,
                   input$comp_upload_controls, input$comp_plate_view,
-                  length(comp_replicates_rv()))
+                  comp_upload_n_plates(), length(comp_replicates_rv()))
 
   # Hover tooltip: show well ID. Uses comp_curves_data() so coordinates match the plot.
   output$comp_curves_tooltip <- renderUI({
