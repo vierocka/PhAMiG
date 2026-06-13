@@ -74,9 +74,10 @@ Numbers reflect the live database (last updated June 2026).
 | Perturbation type | temperature |
 | Temperature range | 27–46 °C (1 °C steps) |
 | Plate format | 48-well microplate, OD600, shaking 2.5 rpm |
-| **Datasets** | **20** (one per temperature) |
+| **Datasets** | **20** (one per temperature; dataset IDs `public_1`–`public_20`) |
 | **Growth curves** | **960** (48 wells per plate) |
 | Author metrics | — |
+| Import | Via `data/metaData.csv` + generic CSV reader (`qres_import_metadata` + `qres_register_raw_measurements`); raw CSVs committed to `data/raw_csv/` |
 | Notes | Used for temperature-response benchmarking; QC plots available (plate-reader data with spatial well layout) |
 
 ---

@@ -2223,24 +2223,35 @@ server <- function(input, output, session) {
     did  <- selected_dataset()
     df   <- dataset_results()
     row  <- if (nrow(df) > 0) df[df$dataset_id == did, ][1, ] else NULL
+    raw  <- raw_long()
 
+    # Q1 organism · Q2 condition (medium · temperature · perturbation)
     title <- if (!is.null(row) && nrow(row) > 0) {
       parts <- c(
         paste0(row$species %||% did,
                if (!is.na(row$strain %||% NA) && nzchar(row$strain %||% ''))
-                 paste0(' (', row$strain, ')') else ''),
+                 paste0(' ', row$strain) else ''),
+        if (!is.na(row$medium_type %||% NA)) row$medium_type else NULL,
         if (!is.na(row$temperature_c %||% NA)) paste0(row$temperature_c, '°C') else NULL,
         if (!is.na(row$perturbation_type %||% NA) && row$perturbation_type != 'none')
           paste0(row$perturbation_type,
                  if (!is.na(row$perturbation %||% NA) && nzchar(row$perturbation %||% ''))
-                   paste0(': ', row$perturbation) else '') else NULL,
-        if (!is.na(row$medium_type %||% NA)) row$medium_type else NULL
+                   paste0(': ', row$perturbation) else '') else NULL
       )
-      paste('Raw curves —', paste(Filter(Negate(is.null), parts), collapse = ' | '))
-    } else {
-      paste('Raw curves —', did)
-    }
-    qres_plot_growth(raw_long(), log_y = input$log_y, title = title)
+      paste(Filter(Negate(is.null), parts), collapse = ' · ')
+    } else { did }
+    # Q3 measurement · Q4 preprocessing · Q5 observation unit
+    sig   <- if (!is.null(raw) && 'signal_type' %in% names(raw))
+               unique(na.omit(raw$signal_type))[1] else NULL
+    munit <- if (!is.null(row) && !is.null(row$measurement_unit %||% NULL) &&
+                 nzchar(row$measurement_unit %||% '')) row$measurement_unit else NULL
+    meas_lbl  <- if (!is.null(sig) && !is.null(munit)) paste0(sig, ' [', munit, ']')
+                 else sig
+    sub_parts <- Filter(Negate(is.null), list(meas_lbl, 'no baseline correction', '1 line = 1 well'))
+    subtitle  <- paste(sub_parts, collapse = ' · ')
+    p <- qres_plot_growth(raw, log_y = input$log_y, title = title)
+    if (nzchar(subtitle)) p <- p + ggplot2::labs(subtitle = subtitle)
+    p
   })
 
   output$plate_qc_text <- renderPrint({
@@ -4066,83 +4077,67 @@ server <- function(input, output, session) {
     raw
   })
 
-  output$comp_curves <- renderPlot({
-    raw           <- comp_curves_data()
-    ctrl_well_ids <- raw$well_id[raw$well %in% (input$comp_upload_controls %||% character(0))]
-    # Derive multiplate from the data so this is immune to reactiveVal timing races.
-    # plate_label is guaranteed present and correct inside comp_curves_data().
-    multiplate  <- 'plate_label' %in% names(raw) && length(unique(raw$plate_label)) > 1L
-    per_plate   <- multiplate && (input$comp_plate_view %||% 'together') == 'per_plate'
-    colour_col  <- if (multiplate && !per_plate) 'plate_label'
-                   else if ('plot_label' %in% names(raw)) 'plot_label'
-                   else 'dataset_id'
-
-    # ── Publication-ready title answering the 5 plot questions ────────────────
-    # Q1 What organism? Q2 What condition? Q3 What measurement?
-    # Q4 What preprocessing? Q5 What is one line/point?
-    .dvals <- function(col, df) {
-      if (!col %in% names(df)) return(character(0))
-      v <- sort(unique(na.omit(as.character(df[[col]]))))
-      v[nzchar(v) & v != 'NA']
-    }
+  # ── Shared 5-question title (Q1 organism · Q2 condition · Q3 measurement ·
+  # Q4 preprocessing · Q5 observation unit) used by both curves and boxplot. ──
+  comp_plot_labels <- reactive({
+    raw  <- tryCatch(comp_curves_data(), error = function(e) NULL)
     meta <- tryCatch({
       m <- comp_filtered_rv()
       if (nrow(m) > 0 && 'dataset_id' %in% names(m))
         m[m$dataset_id %in% comp_active_ids(), , drop = FALSE]
       else m
     }, error = function(e) data.frame())
-
+    .dv <- function(col) {
+      if (!col %in% names(meta)) return(character(0))
+      v <- sort(unique(na.omit(as.character(meta[[col]]))))
+      v[nzchar(v) & v != 'NA']
+    }
     abbrev_sp <- function(s) sub("^(\\S)\\S+ (\\S+).*$", "\\1. \\2", s)
-    sp_vec    <- .dvals('species', meta)
-    sp_lbl    <- switch(as.character(length(sp_vec)),
-      "0" = NULL, "1" = abbrev_sp(sp_vec),
-      paste(sapply(sp_vec, abbrev_sp), collapse = ", "))
-
-    med_vec   <- .dvals('medium_type', meta)
-    med_lbl   <- switch(as.character(length(med_vec)),
-      "0" = NULL, "1" = med_vec, paste0(length(med_vec), " media"))
-
-    tc_vec    <- suppressWarnings(sort(as.numeric(.dvals('temperature_c', meta))))
-    tc_vec    <- tc_vec[is.finite(tc_vec)]
-    tc_lbl    <- if (length(tc_vec) == 0) NULL
-                 else if (length(tc_vec) == 1) paste0(tc_vec, "°C")
-                 else paste0(min(tc_vec), "–", max(tc_vec), "°C")
-
-    pt_vec    <- .dvals('perturbation_type', meta)
-    pt_vec    <- pt_vec[!pt_vec %in% c('none', 'temperature', '')]
-    pt_lbl    <- if (length(pt_vec) == 0) NULL else paste(unique(pt_vec), collapse = "/")
-
+    sp_vec <- .dv('species')
+    sp_lbl <- switch(as.character(length(sp_vec)), "0" = NULL, "1" = abbrev_sp(sp_vec),
+                     paste(sapply(sp_vec, abbrev_sp), collapse = ', '))
+    med_vec <- .dv('medium_type')
+    med_lbl <- switch(as.character(length(med_vec)), "0" = NULL, "1" = med_vec,
+                      paste0(length(med_vec), ' media'))
+    tc_vec  <- suppressWarnings(sort(as.numeric(.dv('temperature_c'))))
+    tc_vec  <- tc_vec[is.finite(tc_vec)]
+    tc_lbl  <- if (length(tc_vec) == 0) NULL else if (length(tc_vec) == 1) paste0(tc_vec, '°C')
+               else paste0(min(tc_vec), '–', max(tc_vec), '°C')
+    pt_vec  <- .dv('perturbation_type')
+    pt_vec  <- pt_vec[!pt_vec %in% c('none', 'temperature', '')]
+    pt_lbl  <- if (length(pt_vec) == 0) NULL else paste(unique(pt_vec), collapse = '/')
     title_parts <- Filter(Negate(is.null), list(sp_lbl, med_lbl, tc_lbl, pt_lbl))
-    plot_title  <- if (length(title_parts) > 0)
-                     paste(title_parts, collapse = " · ") else NULL
-
-    # Q3: measurement — signal_type is in Parquet; measurement_unit is in registry
-    # (not in the raw data frame), so fall back to meta for the unit label.
-    sig_types  <- sort(unique(na.omit(raw$signal_type)))
-    meas_units <- if ('measurement_unit' %in% names(raw) &&
+    plot_title  <- if (length(title_parts) > 0) paste(title_parts, collapse = ' · ') else NULL
+    sig_types  <- if (!is.null(raw)) sort(unique(na.omit(raw$signal_type))) else character(0)
+    meas_units <- if (!is.null(raw) && 'measurement_unit' %in% names(raw) &&
                       any(!is.na(raw$measurement_unit)))
                     sort(unique(na.omit(raw$measurement_unit)))
-                  else .dvals('measurement_unit', meta)
-    meas_lbl   <- if (length(sig_types) > 0 && length(meas_units) > 0)
-                    paste0(sig_types[1], " [", meas_units[1], "]")
-                  else if (length(sig_types) > 0) sig_types[1] else NULL
-
-    # Q4: preprocessing
+                  else .dv('measurement_unit')
+    meas_lbl <- if (length(sig_types) > 0 && length(meas_units) > 0)
+                  paste0(sig_types[1], ' [', meas_units[1], ']')
+                else if (length(sig_types) > 0) sig_types[1] else NULL
     bm_used  <- input$comp_curves_baseline %||% 'none'
     prep_lbl <- switch(bm_used,
-      none        = "no baseline correction",
-      min_well    = "min-per-well subtraction",
-      first3      = "first-3-timepoints baseline",
-      blank_wells = "blank-well subtraction",
-      bm_used)
+      none='no baseline correction', min_well='min-per-well subtraction',
+      first3='first-3-timepoints baseline', blank_wells='blank-well subtraction', bm_used)
+    one_line <- if (length(comp_replicates_rv()) > 0) '1 line = 1 replicate group'
+                else '1 line = 1 well'
+    sub_parts <- Filter(Negate(is.null), list(meas_lbl, prep_lbl, one_line))
+    list(title    = plot_title,
+         subtitle = paste(sub_parts, collapse = ' · '))
+  })
 
-    # Q5: unit of observation
-    one_line <- if (length(comp_replicates_rv()) > 0) "1 line = 1 replicate group"
-                else "1 line = 1 well"
-
-    sub_parts     <- Filter(Negate(is.null), list(meas_lbl, prep_lbl, one_line))
-    plot_subtitle <- paste(sub_parts, collapse = " · ")
-    # ── end title block ────────────────────────────────────────────────────────
+  output$comp_curves <- renderPlot({
+    raw           <- comp_curves_data()
+    ctrl_well_ids <- raw$well_id[raw$well %in% (input$comp_upload_controls %||% character(0))]
+    multiplate  <- 'plate_label' %in% names(raw) && length(unique(raw$plate_label)) > 1L
+    per_plate   <- multiplate && (input$comp_plate_view %||% 'together') == 'per_plate'
+    colour_col  <- if (multiplate && !per_plate) 'plate_label'
+                   else if ('plot_label' %in% names(raw)) 'plot_label'
+                   else 'dataset_id'
+    lbl           <- comp_plot_labels()
+    plot_title    <- lbl$title
+    plot_subtitle <- lbl$subtitle
 
     p <- qres_plot_growth(raw, log_y = input$comp_log_y %||% FALSE,
                           colour_by     = colour_col,
@@ -4269,8 +4264,9 @@ server <- function(input, output, session) {
     }
     facet_col <- if ('plot_label' %in% names(combined)) 'plot_label' else 'dataset_id'
     qres_plot_metric_comparison(combined, metric = metric,
-      facet_by = if (length(unique(combined[[facet_col]])) > 1) facet_col else NULL,
-      log_y    = isTRUE(input$comp_boxplot_log_y))
+      facet_by      = if (length(unique(combined[[facet_col]])) > 1) facet_col else NULL,
+      log_y         = isTRUE(input$comp_boxplot_log_y),
+      context_title = comp_plot_labels()$title)
   }) |> bindCache(comp_active_ids(), comp_has_upload(),
                   input$comp_tools, input$comp_baseline,
                   input$comp_rep_agg_mode, length(comp_replicates_rv()),
@@ -5824,10 +5820,34 @@ server <- function(input, output, session) {
           label = 'Run a query to populate the comparison plot.') +
         ggplot2::theme_void())
     }
+    # Build context title from NL result metadata (same logic as nl_curves_plot)
+    nl_meta <- tryCatch({
+      m <- nl_result()$data
+      ids <- nl_active_ids()
+      if (!is.null(m) && 'dataset_id' %in% names(m)) m[m$dataset_id %in% ids, , drop=FALSE]
+      else data.frame()
+    }, error = function(e) data.frame())
+    .dv2 <- function(col) {
+      if (!col %in% names(nl_meta)) return(character(0))
+      v <- sort(unique(na.omit(as.character(nl_meta[[col]]))))
+      v[nzchar(v) & v != 'NA']
+    }
+    abbrev_sp2 <- function(s) sub("^(\\S)\\S+ (\\S+).*$", "\\1. \\2", s)
+    sp_vec2  <- .dv2('species')
+    sp_lbl2  <- if (length(sp_vec2) == 0) NULL else if (length(sp_vec2) == 1)
+                  abbrev_sp2(sp_vec2) else paste(sapply(sp_vec2, abbrev_sp2), collapse = ', ')
+    med_vec2 <- .dv2('medium_type')
+    med_lbl2 <- switch(as.character(length(med_vec2)), "0"=NULL, "1"=med_vec2,
+                       paste0(length(med_vec2), ' media'))
+    tc_vec2  <- suppressWarnings(sort(as.numeric(.dv2('temperature_c'))))
+    tc_lbl2  <- if (length(tc_vec2) == 0) NULL else if (length(tc_vec2) == 1)
+                  paste0(tc_vec2, '°C') else paste0(min(tc_vec2), '–', max(tc_vec2), '°C')
+    nl_ctx   <- paste(Filter(Negate(is.null), list(sp_lbl2, med_lbl2, tc_lbl2)), collapse = ' · ')
     facet_col <- if ('plot_label' %in% names(combined)) 'plot_label' else 'dataset_id'
     qres_plot_metric_comparison(combined, metric = metric,
-      facet_by = if (length(unique(combined[[facet_col]])) > 1) facet_col else NULL,
-      log_y    = isTRUE(input$nl_comp_log_y))
+      facet_by      = if (length(unique(combined[[facet_col]])) > 1) facet_col else NULL,
+      log_y         = isTRUE(input$nl_comp_log_y),
+      context_title = if (nzchar(nl_ctx)) nl_ctx else NULL)
   }) |> bindCache(nl_active_ids(), input$nl_table_rows_selected,
                   input$nl_comp_tools, input$nl_comp_baseline,
                   input$nl_metric_select, input$nl_comp_log_y)
@@ -5959,6 +5979,18 @@ server <- function(input, output, session) {
     combined <- dplyr::bind_rows(Filter(Negate(is.null), raw_list))
     if (nrow(combined) == 0) return(NULL)
 
+    # Guard: refuse to combine datasets with different signal types
+    if ('signal_type' %in% names(combined)) {
+      sig_types <- sort(unique(na.omit(combined$signal_type)))
+      sig_types <- sig_types[nzchar(sig_types)]
+      if (length(sig_types) > 1)
+        validate(need(FALSE, paste0(
+          "Incompatible measurement types in query results: ",
+          paste(sig_types, collapse = " + "),
+          ". Cannot overlay ", paste(sig_types, collapse = ", "),
+          " on the same y-axis. Refine your query to return one measurement type.")))
+    }
+
     nl_bmethod     <- input$nl_baseline %||% 'none'
     nl_bids        <- if (nl_bmethod == 'blank_wells')
       tryCatch(qres_get_blank_wells(con, ids), error = function(e) character(0))
@@ -5977,8 +6009,46 @@ server <- function(input, output, session) {
     colour_col  <- if ('plot_label' %in% names(combined)) 'plot_label' else 'dataset_id'
     n_groups    <- length(unique(combined[[colour_col]]))
     colour_by   <- if (n_groups <= 1L) 'well' else colour_col
-    qres_plot_growth(combined, log_y = input$nl_log_y %||% FALSE,
-                     colour_by = colour_by, control_wells = ctrl_ids, title = NULL)
+
+    # 5-question title from query result metadata
+    nl_meta <- tryCatch(res$data, error = function(e) NULL)
+    nl_meta <- if (!is.null(nl_meta) && nrow(nl_meta) > 0 &&
+                   'dataset_id' %in% names(nl_meta))
+                 nl_meta[nl_meta$dataset_id %in% ids, , drop = FALSE]
+               else data.frame()
+    .dv <- function(col) {
+      if (!col %in% names(nl_meta)) return(character(0))
+      v <- sort(unique(na.omit(as.character(nl_meta[[col]]))))
+      v[nzchar(v) & v != 'NA']
+    }
+    abbrev_sp <- function(s) sub("^(\\S)\\S+ (\\S+).*$", "\\1. \\2", s)
+    sp_vec  <- .dv('species')
+    sp_lbl  <- if (length(sp_vec) == 0) NULL else if (length(sp_vec) == 1)
+                 abbrev_sp(sp_vec) else paste(sapply(sp_vec, abbrev_sp), collapse = ', ')
+    med_lbl <- switch(as.character(length(.dv('medium_type'))),
+                 "0" = NULL, "1" = .dv('medium_type')[1],
+                 paste0(length(.dv('medium_type')), ' media'))
+    tc_vec  <- suppressWarnings(sort(as.numeric(.dv('temperature_c'))))
+    tc_vec  <- tc_vec[is.finite(tc_vec)]
+    tc_lbl  <- if (length(tc_vec) == 0) NULL else if (length(tc_vec) == 1)
+                 paste0(tc_vec, '°C') else paste0(min(tc_vec), '–', max(tc_vec), '°C')
+    pt_vec  <- .dv('perturbation_type')
+    pt_vec  <- pt_vec[!pt_vec %in% c('none', 'temperature', '')]
+    pt_lbl  <- if (length(pt_vec) == 0) NULL else paste(pt_vec, collapse = '/')
+    nl_title_parts <- Filter(Negate(is.null), list(sp_lbl, med_lbl, tc_lbl, pt_lbl))
+    nl_title       <- if (length(nl_title_parts) > 0)
+                        paste(nl_title_parts, collapse = ' · ') else NULL
+    sig    <- sort(unique(na.omit(combined$signal_type)))[1]
+    bm_lbl <- switch(nl_bmethod,
+      none='no baseline correction', min_well='min-per-well subtraction',
+      first3='first-3-timepoints baseline', blank_wells='blank-well subtraction', nl_bmethod)
+    nl_subtitle <- paste(Filter(Negate(is.null),
+      list(if (!is.null(sig)) sig else NULL, bm_lbl, '1 line = 1 well')), collapse = ' · ')
+
+    p <- qres_plot_growth(combined, log_y = input$nl_log_y %||% FALSE,
+                     colour_by = colour_by, control_wells = ctrl_ids, title = nl_title)
+    if (nzchar(nl_subtitle)) p <- p + ggplot2::labs(subtitle = nl_subtitle)
+    p
   })
 }
 

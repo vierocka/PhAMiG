@@ -274,9 +274,11 @@ qres.duckdb                         ← all metadata, registry, embargo
   ├── well_metadata                 (well, plate_id, species, strain, medium,
   │                                  perturbation, is_blank, is_control)
   ├── dataset_conditions            (dataset_id, species, strain, medium_type,
-  │                                  perturbation_type, perturbation)
+  │                                  perturbation_type, perturbation, signal_type)
   │                                 ← pre-aggregated GROUP BY result; replaces
   │                                   the per-query subquery on well_metadata.
+  │                                   signal_type joined from raw_measurement_registry
+  │                                   so searches can filter by measurement type.
   │                                   Populated by qres_sync_conditions() after
   │                                   every import. Indexed on dataset_id + species.
   ├── medium_composition            (dataset_id, compound, conc_mm, conc_base_mm,
@@ -400,14 +402,15 @@ The double-underscore `__` separator is chosen so that `plate_id` can be extract
 
 **Rule:** datasets with different `signal_type` values cannot be combined in the same analysis — the y-axes are dimensionally incompatible.
 
-### Known naming inconsistencies (legacy, not yet fixed)
+### Known naming inconsistencies (legacy data only)
 
-| File | Issue |
-|---|---|
-| `generic_csv.R`, `logphase_reader.R` | `well_id = paste(dataset_id, plate_id, well, sep='__')` — redundantly includes `dataset_id` prefix |
-| `keio_import.R` (batch path) | Some `well_id` values built as `dataset_id__plate_1__R{rep_n}` instead of `plate_id__well` |
+| Source | Issue | Status |
+|---|---|---|
+| `keio_import.R` (batch path) | Some `well_id` values built as `dataset_id__plate_1__R{rep_n}` instead of `plate_id__well` | Legacy — contained, does not affect query correctness |
+| `logphase_reader.R` | `well_id` built as `paste(dataset_id, plate_id, well, sep='__')` | Legacy — fix pending |
+| `generic_csv.R` | Was using same redundant pattern — **fixed** (`paste0(plate_id, '__', well)`) | Fixed; existing Parquet files for `public_1`–`public_20` use the old format until re-imported |
 
-These were imported before the convention was formalised. Fixing them would require rewriting all affected Parquet files and DB records. The inconsistency is contained (each dataset's IDs are still internally consistent) and does not affect query correctness.
+The `keio_import.R` inconsistency was present before the convention was formalised; fixing it would require rewriting ~7,818 Parquet files. Each dataset's IDs remain internally consistent so query correctness is not affected.
 
 ---
 

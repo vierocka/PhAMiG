@@ -14,22 +14,28 @@ qres_sync_conditions <- function(con, dataset_ids = NULL) {
       params = as.list(dataset_ids))
     DBI::dbExecute(con, sprintf("
       INSERT INTO dataset_conditions
-        (dataset_id, species, strain, medium_type, perturbation_type, perturbation)
+        (dataset_id, species, strain, medium_type, perturbation_type, perturbation, signal_type)
       SELECT DISTINCT p.dataset_id, w.species, w.strain,
-             w.medium_type, w.perturbation_type, w.perturbation
+             w.medium_type, w.perturbation_type, w.perturbation,
+             COALESCE(rmr.signal_type, drr.signal_type)
       FROM well_metadata w
       JOIN plate p ON w.plate_id = p.plate_id
+      LEFT JOIN raw_measurement_registry rmr ON rmr.dataset_id = p.dataset_id
+      LEFT JOIN dose_response_registry   drr ON drr.dataset_id = p.dataset_id
       WHERE p.dataset_id IN (%s)", ph),
       params = as.list(dataset_ids))
   } else {
     DBI::dbExecute(con, "DELETE FROM dataset_conditions")
     DBI::dbExecute(con, "
       INSERT INTO dataset_conditions
-        (dataset_id, species, strain, medium_type, perturbation_type, perturbation)
+        (dataset_id, species, strain, medium_type, perturbation_type, perturbation, signal_type)
       SELECT DISTINCT p.dataset_id, w.species, w.strain,
-             w.medium_type, w.perturbation_type, w.perturbation
+             w.medium_type, w.perturbation_type, w.perturbation,
+             COALESCE(rmr.signal_type, drr.signal_type)
       FROM well_metadata w
-      JOIN plate p ON w.plate_id = p.plate_id")
+      JOIN plate p ON w.plate_id = p.plate_id
+      LEFT JOIN raw_measurement_registry rmr ON rmr.dataset_id = p.dataset_id
+      LEFT JOIN dose_response_registry   drr ON drr.dataset_id = p.dataset_id")
   }
   invisible(NULL)
 }

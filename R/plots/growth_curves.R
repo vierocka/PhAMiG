@@ -172,6 +172,8 @@ qres_plot_multi_temp <- function(raw_long_list, log_y = FALSE) {
                  colour = dataset_id)) +
     ggplot2::geom_line(alpha = 0.35, linewidth = 0.35) +
     ggplot2::theme_bw(base_size = 12) +
-    ggplot2::labs(x = 'Time [h]', y = 'OD', colour = 'Dataset / Temperature') +
+    ggplot2::labs(x = 'Time [h]',
+                  y = if ('signal_type' %in% names(combined)) unique(combined$signal_type)[1] else 'OD',
+                  colour = 'Dataset / Temperature') +
     if (isTRUE(log_y)) ggplot2::scale_y_log10() else ggplot2::scale_y_continuous()
 }

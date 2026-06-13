@@ -20,7 +20,8 @@ QRES_KEY_METRICS <- c('mumax_percapita', 'lag_time_h', 'doubling_time_h', 'auc_t
 }
 
 qres_plot_metric_comparison <- function(comparison_df, metric = 'mumax_percapita',
-                                         facet_by = NULL, log_y = FALSE) {
+                                         facet_by = NULL, log_y = FALSE,
+                                         context_title = NULL) {
   requireNamespace('ggplot2')
   requireNamespace('dplyr')
 
@@ -35,6 +36,12 @@ qres_plot_metric_comparison <- function(comparison_df, metric = 'mumax_percapita
 
   unit_label <- unique(df$metric_unit)[1] %||% ''
   y_label    <- if (nzchar(unit_label)) paste0(metric, ' [', unit_label, ']') else metric
+  # Title = context (organism · condition) from caller; subtitle = metric + "1 point = 1 well"
+  main_title <- context_title %||% paste('Tool benchmarking —', metric)
+  sub_title  <- if (!is.null(context_title))
+                  paste0(metric, if (nzchar(unit_label)) paste0(' [', unit_label, ']') else '',
+                         ' · 1 point = 1 well')
+                else NULL
 
   p <- ggplot2::ggplot(df,
          ggplot2::aes(x = tool, y = metric_value, fill = tool, colour = tool)) +
@@ -42,7 +49,8 @@ qres_plot_metric_comparison <- function(comparison_df, metric = 'mumax_percapita
     ggplot2::geom_jitter(width = 0.15, alpha = 0.55, size = 1.2) +
     ggplot2::theme_bw(base_size = 12) +
     ggplot2::labs(x = 'Tool', y = y_label,
-                  title = paste('Tool benchmarking —', metric)) +
+                  title    = main_title,
+                  subtitle = sub_title) +
     ggplot2::theme(legend.position = 'none',
                    axis.text.x = ggplot2::element_text(angle = 30, hjust = 1))
 

@@ -129,7 +129,8 @@ qres_init_schema <- function(con) {
       strain            TEXT,
       medium_type       TEXT,
       perturbation_type TEXT,
-      perturbation      TEXT
+      perturbation      TEXT,
+      signal_type       TEXT
     )
   ")
 
@@ -280,15 +281,31 @@ qres_migrate_schema <- function(con) {
   tryCatch(DBI::dbExecute(con,
     "UPDATE well_metadata SET species = 'E. coli' WHERE species = 'Escherichia coli'"),
     error = function(e) NULL)
+  # signal_type added to dataset_conditions (idempotent ADD COLUMN)
+  tryCatch(DBI::dbExecute(con,
+    "ALTER TABLE dataset_conditions ADD COLUMN IF NOT EXISTS signal_type TEXT"),
+    error = function(e) NULL)
+  # Back-fill signal_type for existing dataset_conditions rows that have it NULL
+  tryCatch(DBI::dbExecute(con, "
+    UPDATE dataset_conditions dc
+    SET signal_type = COALESCE(
+          (SELECT rmr.signal_type FROM raw_measurement_registry rmr WHERE rmr.dataset_id = dc.dataset_id LIMIT 1),
+          (SELECT drr.signal_type FROM dose_response_registry   drr WHERE drr.dataset_id = dc.dataset_id LIMIT 1)
+        )
+    WHERE dc.signal_type IS NULL"), error = function(e) NULL)
+
   # Backfill dataset_conditions for any datasets not yet represented there.
   # The NOT IN guard makes this idempotent — only fills gaps, never duplicates.
   tryCatch(DBI::dbExecute(con, "
     INSERT INTO dataset_conditions
-      (dataset_id, species, strain, medium_type, perturbation_type, perturbation)
+      (dataset_id, species, strain, medium_type, perturbation_type, perturbation, signal_type)
     SELECT DISTINCT p.dataset_id, w.species, w.strain,
-           w.medium_type, w.perturbation_type, w.perturbation
+           w.medium_type, w.perturbation_type, w.perturbation,
+           COALESCE(rmr.signal_type, drr.signal_type)
     FROM well_metadata w
     JOIN plate p ON w.plate_id = p.plate_id
+    LEFT JOIN raw_measurement_registry rmr ON rmr.dataset_id = p.dataset_id
+    LEFT JOIN dose_response_registry   drr ON drr.dataset_id = p.dataset_id
     WHERE p.dataset_id NOT IN (
       SELECT DISTINCT dataset_id FROM dataset_conditions WHERE dataset_id IS NOT NULL
     )"), error = function(e) NULL)

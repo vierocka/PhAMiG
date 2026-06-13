@@ -73,7 +73,7 @@ qres_excel_to_long <- function(path, dataset_id = '__upload__', signal_type = 'O
     long[, time_h     := .parse_time_to_hours(as.character(time_h))]
     long[, dataset_id  := dataset_id]
     long[, plate_id    := plate_id]
-    long[, well_id     := paste(dataset_id, plate_id, well, sep = '__')]
+    long[, well_id     := paste0(plate_id, '__', well)]
     long[, signal_type := signal_type]
     data.table::setcolorder(long, c('dataset_id', 'plate_id', 'well_id',
                                      'well', 'time_h', 'signal_type', 'value'))
@@ -116,7 +116,7 @@ qres_raw_to_long <- function(raw_csv, dataset_id,
   long[, time_h := .parse_time_to_hours(as.character(time_h))]
   long[, dataset_id  := dataset_id]
   long[, plate_id    := plate_id]
-  long[, well_id     := paste(dataset_id, plate_id, well, sep = '__')]
+  long[, well_id     := paste0(plate_id, '__', well)]
   long[, signal_type := signal_type]
   data.table::setcolorder(long, c('dataset_id', 'plate_id', 'well_id',
                                    'well', 'time_h', 'signal_type', 'value'))
