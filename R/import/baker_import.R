@@ -33,11 +33,12 @@ BAKER_DATASET <- 'baker_2018_mtb_gc'
 
 baker_import_complements <- function(
     con,
-    source_dir  = '/home/veve/Dropbox/GrowthDB_Qres/Mycobacterium_tuberculosis_mutants_2018_Baker',
+    source_dir  = NULL,
     parquet_dir = 'data/parquet/raw_measurements',
     overwrite   = FALSE,
     verbose     = TRUE) {
 
+  if (is.null(source_dir)) stop('source_dir is required: path to the Baker 2018 M. tuberculosis data folder')
   .msg <- function(...) if (verbose) message(...)
 
   did      <- BAKER_DATASET

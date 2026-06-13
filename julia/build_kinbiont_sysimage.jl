@@ -6,7 +6,7 @@
 #
 # Takes 5–15 minutes. Output: ~/.phamig_kinbiont.so
 # Then add to ~/.Renviron:
-#   KINBIONT_SYSIMAGE=/home/veve/.phamig_kinbiont.so
+#   KINBIONT_SYSIMAGE=/path/to/.phamig_kinbiont.so
 
 using PackageCompiler
 

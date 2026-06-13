@@ -1,3 +1,13 @@
+# Why I made Qres DB open source
+
+I built Qres DB from scratch because I believe that progress in understanding microbial evolution depends on openly accessible data, transparent methods, and reproducible analyses. By releasing the code, I hope to help others contribute datasets, improve the platform, and build upon the work.
+
+My long-term vision is to create a resource large enough to identify how combinations of environmental conditions, stressors, nutrients, temperatures, and antimicrobial compounds influence microbial adaptation and evolution. Understanding these patterns may eventually help researchers develop treatment strategies that limit the emergence of resistance and improve outcomes for patients with severe infections.
+
+Qres DB is under active development. New datasets are continuously being integrated, while ongoing work focuses on improving performance, scalability, and benchmarking of growth-analysis tools to ensure robust and reproducible comparisons across experimental conditions.
+
+I would be delighted if a larger institution or community initiative chose to host and support the platform. Reducing administrative and technical barriers to data sharing would allow researchers to contribute data more easily and accelerate scientific progress in understanding microbial growth, adaptation, and evolution.
+
 # PhaMiG — PHenotypic Analysis of Microbial Growth
 
 A Shiny + DuckDB web application for storing, querying, and benchmarking microbial

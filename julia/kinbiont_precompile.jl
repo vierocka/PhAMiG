@@ -5,7 +5,7 @@
 # Build the sysimage (run once, takes ~5-10 min):
 #   julia julia/build_kinbiont_sysimage.jl
 # After building, set in ~/.Renviron:
-#   KINBIONT_SYSIMAGE=/home/veve/.phamig_kinbiont.so
+#   KINBIONT_SYSIMAGE=/path/to/.phamig_kinbiont.so
 
 import CSV, DataFrames
 using Kinbiont

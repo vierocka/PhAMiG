@@ -19,8 +19,7 @@
 #
 # Usage:
 #   source('R/import/aida_import.R')
-#   aida_import_all(con,
-#     source_dir = '/home/veve/Dropbox/GrowthDB_Qres/Ecoli_ChemicallyDefinedMedia_PopDyn')
+#   aida_import_all(con, source_dir = '/path/to/Ecoli_ChemicallyDefinedMedia_PopDyn')
 # ──────────────────────────────────────────────────────────────────────────────
 
 AIDA_DOI        <- '10.1038/s41597-025-05356-3'
@@ -105,11 +104,12 @@ aida_migrate_schema <- function(con) {
 # ── Main import ───────────────────────────────────────────────────────────────
 aida_import_all <- function(
     con,
-    source_dir  = '/home/veve/Dropbox/GrowthDB_Qres/Ecoli_ChemicallyDefinedMedia_PopDyn',
+    source_dir  = NULL,
     parquet_dir = 'data/parquet/raw_measurements',
     overwrite   = FALSE,
     verbose     = TRUE
 ) {
+  if (is.null(source_dir)) stop('source_dir is required: path to the Aida & Ying 2025 CDM data folder')
   requireNamespace('DBI'); requireNamespace('readxl')
   requireNamespace('data.table'); requireNamespace('arrow')
 

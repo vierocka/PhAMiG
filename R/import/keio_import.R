@@ -61,11 +61,12 @@ keio_migrate_schema <- function(con) {
 # ── Main import function ──────────────────────────────────────────────────────
 keio_import_all <- function(
     con,
-    source_dir  = '/home/veve/Dropbox/GrowthDB_Qres/Ecoli_3909_singleGeneKO/28342043',
+    source_dir  = NULL,
     parquet_dir = 'data/parquet/raw_measurements',
     overwrite   = FALSE,   # TRUE: re-import datasets that already exist in DB
     verbose     = TRUE
 ) {
+  if (is.null(source_dir)) stop('source_dir is required: path to the Keio/Lao & Ying 2026 data folder')
   requireNamespace('DBI')
   requireNamespace('readxl')
   requireNamespace('data.table')
@@ -360,9 +361,10 @@ keio_import_all <- function(
 # medium-column merge bug, or to re-import metrics without re-importing raw data.
 keio_import_metrics <- function(
     con,
-    source_dir = '/home/veve/Dropbox/GrowthDB_Qres/Ecoli_3909_singleGeneKO/28342043',
+    source_dir = NULL,
     verbose    = TRUE
 ) {
+  if (is.null(source_dir)) stop('source_dir is required: path to the Keio/Lao & Ying 2026 data folder')
   requireNamespace('DBI'); requireNamespace('readxl')
 
   .msg <- function(...) if (verbose) message('[keio-metrics] ', ...)

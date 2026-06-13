@@ -20,8 +20,9 @@ data/long_csv/
 # ── Stale flat files (superseded by modular R/ — sourcing them breaks the app) ─
 R/_old_flat/
 
-# ── Local working notes ───────────────────────────────────────────────────────
+# ── Local working notes and AI assistant context ─────────────────────────────
 notes_toDo.txt
+CLAUDE.md
 
 # ── Runtime-generated logs (user submissions, app events) ─────────────────────
 Submittion_logs/
