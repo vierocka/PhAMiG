@@ -14,6 +14,7 @@ qres_init_schema <- function(con) {
       source_url   TEXT,
       time_unit    TEXT,
       notes        TEXT,
+      experiment_type TEXT,   -- growth_curve | evolution | endpoint | competition
       import_date  TIMESTAMP DEFAULT current_timestamp
     )
   ")
@@ -35,8 +36,9 @@ qres_init_schema <- function(con) {
   ")
 
   # ── well_metadata: biological conditions per well ─────────────────────────
-  # perturbation_type: chemical | genetic | temperature | none
-  # perturbation:      drug name | mutation | temperature value | (empty)
+  # perturbation_type: chemical | genetic | temperature | evolution | none
+  # perturbation:      drug name | mutation | temperature value | selective agent of an
+  #                    evolution experiment (dose per transfer cycle: transfer_cycle) | (empty)
   DBI::dbExecute(con, "
     CREATE TABLE IF NOT EXISTS well_metadata (
       well_id            TEXT PRIMARY KEY,
@@ -155,6 +157,8 @@ qres_init_schema <- function(con) {
   # conc_base_mm = concentration in the round's base pattern (mM) — for comparison
   # is_stressor  = TRUE for the compound being experimentally varied
   # is_buffer_adj= TRUE for pH-buffer compounds that co-vary with the stressor (e.g. KH2PO4)
+  # conc_value / conc_unit = concentration in the unit reported by the authors, for
+  #   media not given in mM (e.g. Zhang 2026: g/L, mg/L, ml/L); conc_mm stays NULL there
   DBI::dbExecute(con, "
     CREATE TABLE IF NOT EXISTS medium_composition (
       dataset_id    TEXT NOT NULL,
@@ -162,7 +166,9 @@ qres_init_schema <- function(con) {
       conc_mm       DOUBLE,
       conc_base_mm  DOUBLE,
       is_stressor   BOOLEAN DEFAULT FALSE,
-      is_buffer_adj BOOLEAN DEFAULT FALSE
+      is_buffer_adj BOOLEAN DEFAULT FALSE,
+      conc_value    DOUBLE,
+      conc_unit     TEXT
     )
   ")
 
@@ -186,6 +192,34 @@ qres_init_schema <- function(con) {
   ")
   tryCatch(DBI::dbExecute(con,
     "CREATE INDEX IF NOT EXISTS idx_drr_dataset_id ON dose_response_registry(dataset_id)"),
+    error = function(e) NULL)
+
+  # ── transfer_cycle: serial-transfer / experimental-evolution designs ────────
+  # One row per well (= evolving lineage) × growth cycle between two transfers.
+  # Cycle 0 = growth before the first transfer. The raw Parquet file of such a
+  # dataset carries the same integer `cycle` column, so each cycle can be analysed
+  # as a separate batch growth curve (qres_split_transfer_cycles()).
+  #   drug / drug_conc  = selective agent and its concentration during this cycle
+  #   co_treatment      = constant additive (e.g. an inhibitor), if any
+  #   background_od     = blank OD the authors subtracted for this cycle
+  DBI::dbExecute(con, "
+    CREATE TABLE IF NOT EXISTS transfer_cycle (
+      dataset_id     TEXT NOT NULL,
+      well_id        TEXT NOT NULL,
+      cycle          INTEGER NOT NULL,
+      start_time_h   DOUBLE,
+      end_time_h     DOUBLE,
+      n_reads        INTEGER,
+      drug           TEXT,
+      drug_conc      DOUBLE,
+      drug_conc_unit TEXT,
+      co_treatment   TEXT,
+      background_od  DOUBLE,
+      PRIMARY KEY (well_id, cycle)
+    )
+  ")
+  tryCatch(DBI::dbExecute(con,
+    "CREATE INDEX IF NOT EXISTS idx_tc_dataset_id ON transfer_cycle(dataset_id)"),
     error = function(e) NULL)
 
   # ── user_note: bug reports, observations, feature requests ───────────────
@@ -238,6 +272,8 @@ qres_init_schema <- function(con) {
 
 # Safely add new columns to existing tables (forward migration helper)
 qres_migrate_schema <- function(con) {
+  tryCatch(DBI::dbExecute(con, "ALTER TABLE dataset ADD COLUMN IF NOT EXISTS experiment_type TEXT"),
+           error = function(e) NULL)
   tryCatch(DBI::dbExecute(con, "ALTER TABLE dataset ADD COLUMN IF NOT EXISTS notes TEXT"),
            error = function(e) NULL)
   tryCatch(DBI::dbExecute(con, "ALTER TABLE plate ADD COLUMN IF NOT EXISTS shake_freq_rpm DOUBLE"),
@@ -248,7 +284,7 @@ qres_migrate_schema <- function(con) {
            error = function(e) NULL)
   tryCatch(DBI::dbExecute(con, "ALTER TABLE upload_embargo ADD COLUMN IF NOT EXISTS orcid TEXT"),
            error = function(e) NULL)
-  tryCatch(DBI::dbExecute(con, "ALTER TABLE upload_embargo ADD COLUMN IF NOT EXISTS needs_correction BOOLEAN NOT NULL DEFAULT FALSE"),
+  tryCatch(DBI::dbExecute(con, "ALTER TABLE upload_embargo ADD COLUMN IF NOT EXISTS needs_correction BOOLEAN DEFAULT FALSE"),
            error = function(e) NULL)
   tryCatch(DBI::dbExecute(con, "ALTER TABLE processing_run ADD COLUMN IF NOT EXISTS container_hash TEXT"),
            error = function(e) NULL)
@@ -277,6 +313,11 @@ qres_migrate_schema <- function(con) {
 
   # Embargo tables (added in session 3 — safe to run on older DBs)
   qres_init_schema(con)   # CREATE TABLE IF NOT EXISTS is idempotent
+  # medium_composition in author-reported units (added for Zhang 2026)
+  for (sql in c(
+    "ALTER TABLE medium_composition ADD COLUMN IF NOT EXISTS conc_value DOUBLE",
+    "ALTER TABLE medium_composition ADD COLUMN IF NOT EXISTS conc_unit TEXT"
+  )) tryCatch(DBI::dbExecute(con, sql), error = function(e) NULL)
   # Standardise Keio species name to match all other datasets and search filters
   tryCatch(DBI::dbExecute(con,
     "UPDATE well_metadata SET species = 'E. coli' WHERE species = 'Escherichia coli'"),
@@ -309,15 +350,46 @@ qres_migrate_schema <- function(con) {
     WHERE p.dataset_id NOT IN (
       SELECT DISTINCT dataset_id FROM dataset_conditions WHERE dataset_id IS NOT NULL
     )"), error = function(e) NULL)
+  tryCatch(qres_backfill_experiment_type(con), error = function(e) NULL)
   invisible(TRUE)
 }
 
 qres_reset_tables <- function(con) {
-  tbls <- c('dataset_conditions', 'dose_response_registry', 'medium_composition',
+  tbls <- c('dataset_conditions', 'dose_response_registry', 'medium_composition', 'transfer_cycle',
             'user_note', 'model_fit', 'derived_metric',
             'processing_run', 'raw_measurement_registry', 'well_metadata', 'plate', 'dataset')
   for (t in tbls)
     tryCatch(DBI::dbExecute(con, paste('DROP TABLE IF EXISTS', t)), error = function(e) NULL)
   qres_init_schema(con)
+  invisible(TRUE)
+}
+
+# ── Experiment type (data type shown as icons on the Search page) ──────────────
+#   evolution    serial-transfer / experimental evolution (has transfer_cycle rows)
+#   endpoint     single-point measurements: IC50 / MIC / dose-response (dose_response_registry)
+#   growth_curve time-resolved growth per well (raw_measurement_registry) — default
+#   competition  reserved for competition assays (set explicitly by the importer)
+# Only fills NULLs, so an importer can set a type explicitly. Called from
+# qres_migrate_schema() and qres_sync_conditions().
+QRES_EXPERIMENT_TYPES <- c(growth_curve = 'Growth curves', evolution = 'Evolution',
+                           endpoint = 'Endpoints', competition = 'Competition')
+
+qres_backfill_experiment_type <- function(con) {
+  tbls <- DBI::dbListTables(con)
+  tryCatch(DBI::dbExecute(con, "ALTER TABLE dataset ADD COLUMN IF NOT EXISTS experiment_type TEXT"),
+           error = function(e) NULL)
+  if ('transfer_cycle' %in% tbls)
+    DBI::dbExecute(con, "UPDATE dataset SET experiment_type = 'evolution'
+                         WHERE experiment_type IS NULL
+                           AND dataset_id IN (SELECT DISTINCT dataset_id FROM transfer_cycle)")
+  DBI::dbExecute(con, "UPDATE dataset SET experiment_type = 'evolution'
+                       WHERE experiment_type IS NULL AND dataset_id IN (
+                         SELECT DISTINCT p.dataset_id FROM well_metadata w JOIN plate p USING(plate_id)
+                         WHERE w.perturbation_type = 'evolution')")
+  if ('dose_response_registry' %in% tbls)
+    DBI::dbExecute(con, "UPDATE dataset SET experiment_type = 'endpoint'
+                         WHERE experiment_type IS NULL
+                           AND dataset_id IN (SELECT dataset_id FROM dose_response_registry)")
+  DBI::dbExecute(con, "UPDATE dataset SET experiment_type = 'growth_curve' WHERE experiment_type IS NULL")
   invisible(TRUE)
 }

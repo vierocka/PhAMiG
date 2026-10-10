@@ -10,7 +10,8 @@
   'Return ONLY valid JSON with these optional keys:',
   '  species (string), strain (string), medium (string),',
   '  temp_min (number), temp_max (number),',
-  '  perturbation_type ("chemical"|"genetic"|"temperature"|"none"),',
+  '  perturbation_type ("chemical"|"genetic"|"temperature"|"evolution"|"none"),',
+  '  ("evolution" = experimental/long-term evolution, morbidostat, serial transfer),',
   '  perturbation (string), author (string), year_min (int), year_max (int).',
   'If a key cannot be inferred, omit it entirely.',
   'Examples:',
@@ -110,10 +111,10 @@ qres_nl_to_action <- function(text) {
 qres_execute_action <- function(con, action_result, ...) {
   if (!is.null(action_result$sql) && nzchar(action_result$sql %||% '')) {
     sql <- action_result$sql
-    df  <- tryCatch(
-      DBI::dbGetQuery(con, sql),
-      error = function(e) data.frame(error = conditionMessage(e))
-    )
+    # Raw SQL from the LLM is NOT executed: LLM output is untrusted (prompt
+    # injection), the connection is read-write, and DuckDB reads any file named
+    # in FROM ('/path/x.csv'), so a keyword blocklist cannot make it safe.
+    df  <- data.frame(error = 'Raw SQL execution is disabled; use filters instead.')
     return(list(
       type        = 'table',
       data        = df,

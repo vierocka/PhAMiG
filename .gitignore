@@ -31,6 +31,20 @@ submission_logs/
 # ── Zenodo raw downloads (large files, not committed) ─────────────────────────
 Zenodo_data/
 
+# ── Publications and third-party documents ────────────────────────────────────
+# Article PDFs (incl. paywalled ones), supplementary files and downloaded source
+# data are kept next to the repo (../<Author>_<Year>_*/), never inside it.
+*.pdf
+*.doc
+*.docx
+*.epub
+supplementary/
+*_extracted/
+*_ESM.*
+*MOESM*
+# Notes / questions to data providers
+questions_for_*.md
+
 # ── OS noise ──────────────────────────────────────────────────────────────────
 .DS_Store
 Thumbs.db

@@ -2,6 +2,7 @@
 # Eisner et al. 2022 Front. Microbiol. — Myxococcus xanthus rpoB growth fitness
 # 4 strains (GJV1 wt, YTY2 rpoB-S534L, YTY25 rpoB-S534L, YTY26 + variants)
 # 3 casitone concentrations (0.2%, 0.5%, 1% w/v) as nutrient level perturbation
+# (stored as perturbation_type 'chemical', the controlled vocabulary for compound levels)
 # 4 biological replicate plates, 48-well (TECAN Infinite M200 PRO), OD595, 32°C
 # DOI: 10.3389/fmicb.2022.817080
 # Source: Figure_3.xlsx, sheet "raw values", rows 1-303 (raw section only)
@@ -189,7 +190,7 @@ eisner_import_growth <- function(con, source_dir, overwrite = FALSE) {
           (well_id, plate_id, well, species, taxon_id, strain,
            medium_type, perturbation_type, perturbation,
            concentration, concentration_unit, is_blank, is_control)
-          VALUES (?,?,?,'Myxococcus xanthus','34',?,'CTT','nutrient','casitone',?,'%(w/v)',FALSE,FALSE)", list(
+          VALUES (?,?,?,'Myxococcus xanthus','34',?,'CTT','chemical','casitone',?,'%(w/v)',FALSE,FALSE)", list(
           m$well_id, m$plate_id, m$well, m$strain, m$conc
         ))
       }
@@ -205,7 +206,7 @@ eisner_import_growth <- function(con, source_dir, overwrite = FALSE) {
     (dataset_id, storage_type, path, n_rows, n_wells, signal_type, measurement_unit)
     VALUES (?, 'parquet', ?, ?, ?, 'OD600', 'OD')",
     list(did,
-         paste(basename(pq_paths_all), collapse = ";"),
+         paste(pq_paths_all, collapse = ";"),
          total_rows_written,
          as.integer(total_rows_written / 300L)))  # 300 time points per well
 

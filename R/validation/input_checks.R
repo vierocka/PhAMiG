@@ -61,9 +61,10 @@ PHAMIG_FIELD_LIMITS <- list(
     desc = 'e.g. "LB", "MOPS + 3 g/L glucose", "Modified Mueller-Hinton broth"'
   ),
 
-  # Exactly one of these four values
+  # Exactly one of these values. 'evolution' = experimental evolution (morbidostat,
+  # serial transfer, long-term); the selective agent goes in perturbation.
   perturbation_type = list(
-    allowed = c('chemical', 'genetic', 'temperature', 'none')
+    allowed = c('chemical', 'genetic', 'temperature', 'evolution', 'none')
   ),
 
   # Perturbation agent or value.
@@ -175,8 +176,10 @@ qres_sql_safe <- function(x, max_len = 500, escape_like = TRUE) {
   # Escape single quotes
   x <- gsub("'", "''", x, fixed = TRUE)
 
-  # Escape LIKE metacharacters in user input
+  # Escape LIKE metacharacters in user input. Callers must add ESCAPE '\' to the
+  # LIKE clause; the backslash itself is doubled first so it stays a literal.
   if (escape_like) {
+    x <- gsub('\\', '\\\\', x, fixed = TRUE)
     x <- gsub('%', '\\%', x, fixed = TRUE)
     x <- gsub('_', '\\_', x, fixed = TRUE)
   }

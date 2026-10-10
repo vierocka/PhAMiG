@@ -25,6 +25,9 @@
                'glucose', 'glycerol', 'succinate', 'acetate')
 
 .NL_PERTURB_TYPES <- list(
+  # evolution first: 'resistance evolution' must not fall through to chemical
+  'evolution'   = c('evol', 'long.?term', 'morbidostat', 'serial.?(transfer|passag)',
+                    'adaptive laboratory', '\\bale\\b', 'lineage', 'trajector'),
   'temperature' = c('temperature', 'temp', 'thermal', 'heat', 'cold'),
   'chemical'    = c('chemical', 'antibiotic', 'drug', 'stressor', 'compound',
                     'perturbation', 'treatment', 'dose', 'concentration', 'mg/l',

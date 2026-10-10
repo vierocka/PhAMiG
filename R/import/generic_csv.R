@@ -180,7 +180,43 @@ qres_get_raw_curves <- function(con, dataset_id) {
   if (nrow(reg) == 0)
     stop('No raw measurements registered for dataset_id: "', dataset_id, '".',
          '\n  Click "Initialize / refresh DB" or upload the raw CSV first.')
-  .read_raw_file(reg$path[1])
+  paths <- .resolve_raw_paths(reg$path[1])
+  d <- if (length(paths) == 1L) .read_raw_file(paths)
+       else as.data.frame(data.table::rbindlist(lapply(paths, .read_raw_file), fill = TRUE))
+  .normalise_raw_long(d, dataset_id, reg$signal_type[1])
+}
+
+# Bring legacy Parquet layouts to the standard columns
+# (dataset_id, plate_id, well_id, well, time_h, signal_type, value) expected by the
+# plots and plugins. Legacy files: Aida (curve_id, time_h, value) and Baker
+# (well_id, well, time_h, value); without this every tool returned 0 metrics for them.
+.normalise_raw_long <- function(d, dataset_id, signal_type = NA_character_) {
+  if (!'well_id' %in% names(d) && 'curve_id' %in% names(d)) d$well_id <- d$curve_id
+  if (!'well_id' %in% names(d) && 'well' %in% names(d))
+    d$well_id <- paste0(dataset_id, '__plate_1__', d$well)
+  if (!'dataset_id' %in% names(d)) d$dataset_id <- dataset_id
+  if (!'plate_id' %in% names(d)) {
+    d$plate_id <- ifelse(grepl('__', d$well_id), sub('^(.*)__.*$', '\\1', d$well_id),   # cut at the last '__'
+                         paste0(dataset_id, '__plate_1'))
+  }
+  if (!'well' %in% names(d)) d$well <- sub('.*__', '', d$well_id)
+  if (!'signal_type' %in% names(d)) d$signal_type <- signal_type %||% NA_character_
+  d$curve_id <- NULL
+  d
+}
+
+# Multi-plate datasets store one file per plate as a ';'-separated list in
+# raw_measurement_registry.path. Bare filenames (no directory) are resolved
+# against the default Parquet directory.
+.resolve_raw_paths <- function(path) {
+  paths <- trimws(strsplit(path, ';', fixed = TRUE)[[1]])
+  paths <- paths[nzchar(paths)]
+  bare  <- !grepl('/', paths, fixed = TRUE) & !file.exists(paths)
+  paths[bare] <- file.path('data', 'parquet', 'raw_measurements', paths[bare])
+  missing <- paths[!file.exists(paths)]
+  if (length(missing) > 0)
+    stop('Raw data file(s) not found: ', paste(missing, collapse = ', '))
+  paths
 }
 
 # In-session memoised file reader — parquet files are immutable once written.
@@ -193,3 +229,18 @@ qres_get_raw_curves <- function(con, dataset_id) {
 })
 
 qres_read_raw_measurements <- qres_get_raw_curves
+
+# Serial-transfer / evolution data (Parquet with a `cycle` column): turn each
+# well × cycle into its own growth curve so plotting and fitting plugins can treat
+# it like a batch culture. well_id becomes '<well_id>__c<cycle>', time restarts at 0
+# for every cycle (time_h_total keeps the experiment time). Data without a `cycle`
+# column are returned unchanged.
+qres_split_transfer_cycles <- function(raw_long, cycles = NULL) {
+  if (!'cycle' %in% names(raw_long)) return(raw_long)
+  if (!is.null(cycles)) raw_long <- raw_long[raw_long$cycle %in% cycles, , drop = FALSE]
+  raw_long$time_h_total <- raw_long$time_h
+  raw_long$well_id <- paste0(raw_long$well_id, '__c', raw_long$cycle)
+  t0 <- tapply(raw_long$time_h, raw_long$well_id, min)
+  raw_long$time_h <- raw_long$time_h - t0[raw_long$well_id]
+  raw_long
+}

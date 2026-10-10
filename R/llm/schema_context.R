@@ -29,6 +29,11 @@ QRES_SCHEMA_CONTEXT <- '
   metric_name values: mumax_percapita, lag_time_h, doubling_time_h,
   auc_trapezoid, max_od, delta_od, time_to_max_h, asymptote_od
 
+**transfer_cycle** (serial-transfer / experimental-evolution datasets, perturbation_type = "evolution")
+  dataset_id, well_id, cycle INTEGER, start_time_h, end_time_h, n_reads,
+  drug TEXT, drug_conc DOUBLE, drug_conc_unit, co_treatment, background_od
+  One row per well (evolving lineage) x growth cycle between transfers.
+
 **processing_run** (one row per plugin execution)
   processing_id TEXT PK, dataset_id, tool_name, tool_version,
   correction_type, parameters_json, status, message, created_at

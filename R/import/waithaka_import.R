@@ -349,6 +349,32 @@ waithaka_import_rbsr <- function(con, source_dir, overwrite = FALSE) {
     (dataset_id, storage_type, path, compound, conc_unit, signal_type, measurement_unit, n_wells, n_conc)
     VALUES (?, 'parquet', ?, ?, 'ng/mL', 'fluorescence', 'RFU', ?, ?)",
     list(did, pq_path, compound, n_wells, n_conc))
+  waithaka_register_dr_wells(con, did)
+}
+
+# One well_metadata row per dose-response series (cell line × BoxB × batch × replicate),
+# so the dataset appears in dataset_conditions and in search. Concentrations vary within
+# a series (Parquet column conc_ng_ml), so concentration stays NULL here.
+waithaka_register_dr_wells <- function(con, did) {
+  reg <- DBI::dbGetQuery(con, "SELECT path, compound FROM dose_response_registry WHERE dataset_id = ?",
+                         list(did))
+  if (nrow(reg) == 0L) stop("No dose_response_registry row for ", did)
+  series <- unique(as.data.frame(arrow::read_parquet(reg$path[1]))$well)
+  pid    <- DBI::dbGetQuery(con, "SELECT plate_id FROM plate WHERE dataset_id = ? LIMIT 1", list(did))$plate_id
+  DBI::dbExecute(con, "DELETE FROM well_metadata WHERE plate_id = ?", list(pid))
+  wm <- data.frame(
+    well_id = paste0(pid, "__", series), plate_id = pid, well = series,
+    species = "Trypanosoma brucei", taxon_id = "5691",
+    strain = sub("_batch.*$", "", series), medium_state = "liquid", medium_type = "HMI-9",
+    perturbation_type = "chemical", perturbation = reg$compound[1],
+    concentration = NA_real_, concentration_unit = "ng/mL",
+    is_blank = FALSE, is_control = FALSE,
+    replicate = suppressWarnings(as.integer(sub(".*_rep", "", series))),
+    stringsAsFactors = FALSE)
+  if ("dataset_id" %in% DBI::dbListFields(con, "well_metadata")) wm$dataset_id <- did
+  DBI::dbAppendTable(con, "well_metadata", wm)
+  tryCatch(qres_sync_conditions(con, did), error = function(e) NULL)
+  invisible(nrow(wm))
 }
 
 waithaka_import_puro_dr <- function(con, source_dir, overwrite = FALSE) {

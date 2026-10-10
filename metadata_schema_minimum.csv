@@ -18,7 +18,7 @@ species,yes,well,Species,E. coli
 taxon_id,recommended,well,NCBI TaxID,562
 strain,yes,well,Strain,K12 NCM3722
 medium_type,yes,well,Medium,MOPS with 3 g/L glucose
-perturbation_type,yes,well,chemical/genetic/temperature/none,temperature
+perturbation_type,yes,well,chemical/genetic/temperature/evolution/none,temperature
 perturbation,recommended,well,Compound/genotype/condition,rifampicin
 concentration,recommended,well,Numeric perturbation concentration,50
 concentration_unit,recommended,well,Concentration unit,mg/L

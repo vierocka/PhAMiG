@@ -19,8 +19,9 @@ qres_plugin_growthrates <- function(raw_long, metadata = NULL, params = list()) 
     dplyr::group_by(dataset_id, well_id) |>
     dplyr::arrange(time_h) |>
     dplyr::reframe({
-      t <- time_h
-      y <- pmax(value - blank, 1e-9)
+      ok <- is.finite(time_h) & is.finite(value)        # skip missing readings (e.g. Aida NA cells)
+      t <- time_h[ok]
+      y <- pmax(value[ok] - blank, 1e-9)
 
       row <- tryCatch({
         fit <- switch(method,

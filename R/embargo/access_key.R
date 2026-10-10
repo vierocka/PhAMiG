@@ -100,7 +100,12 @@ qres_delete_dataset <- function(con, dataset_id, email, access_key, passphrase,
     return(list(ok = FALSE, message = 'Passphrase is incorrect.'))
 
   # All three match — delete from all tables
-  tables <- c('embargo_check_log', 'upload_embargo', 'derived_metric', 'model_fit',
+  # well_metadata.dataset_id is NULL for older imports: delete wells by plate_id
+  # first, while the plate rows still exist (a dataset_id-only delete leaves orphans).
+  tryCatch(DBI::dbExecute(con,
+    'DELETE FROM well_metadata WHERE plate_id IN (SELECT plate_id FROM plate WHERE dataset_id = ?)',
+    params = list(dataset_id)), error = function(e) NULL)
+  tables <- c('embargo_check_log', 'upload_embargo', 'derived_metric', 'model_fit', 'transfer_cycle',
                'processing_run', 'raw_measurement_registry', 'well_metadata', 'plate', 'dataset')
   for (tbl in tables) {
     tryCatch(
@@ -164,8 +169,19 @@ qres_reopen_dataset <- function(con, dataset_id, email, access_key, passphrase,
   if (!identical(qres_hash_passphrase(trimws(passphrase)), rec$passphrase_hash[1]))
     return(list(ok = FALSE, message = 'Passphrase is incorrect.'))
 
+  # Mark correction flag FIRST: if it fails, nothing has been deleted yet
+  DBI::dbExecute(con,
+    "UPDATE upload_embargo SET needs_correction = TRUE WHERE dataset_id = ?",
+    params = list(dataset_id))
+
   # Remove data rows — keep upload_embargo intact
-  for (tbl in c('raw_measurement_registry', 'well_metadata', 'plate', 'dataset')) {
+  # well_metadata.dataset_id is NULL for older imports: delete wells by plate_id
+  # first, while the plate rows still exist (a dataset_id-only delete leaves orphans).
+  tryCatch(DBI::dbExecute(con,
+    'DELETE FROM well_metadata WHERE plate_id IN (SELECT plate_id FROM plate WHERE dataset_id = ?)',
+    params = list(dataset_id)), error = function(e) NULL)
+  for (tbl in c('derived_metric', 'model_fit', 'processing_run', 'transfer_cycle',
+               'raw_measurement_registry', 'well_metadata', 'plate', 'dataset')) {
     tryCatch(
       DBI::dbExecute(con, sprintf('DELETE FROM %s WHERE dataset_id = ?', tbl),
                      params = list(dataset_id)),
@@ -176,11 +192,6 @@ qres_reopen_dataset <- function(con, dataset_id, email, access_key, passphrase,
   # Delete Parquet file if present
   parquet_path <- file.path(parquet_dir, paste0(dataset_id, '.parquet'))
   if (file.exists(parquet_path)) file.remove(parquet_path)
-
-  # Mark correction flag
-  DBI::dbExecute(con,
-    "UPDATE upload_embargo SET needs_correction = TRUE WHERE dataset_id = ?",
-    params = list(dataset_id))
 
   message(sprintf('[reopen] %s flagged for correction by %s', dataset_id, email))
   list(ok = TRUE,

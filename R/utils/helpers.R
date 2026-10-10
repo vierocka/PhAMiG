@@ -25,32 +25,49 @@ opt_label <- function(label, tooltip = NULL) {
 # Accepts three notations:
 #   "1, 2, 3, 4"       — comma-separated integers
 #   "1:4"              — integer range (equivalent to the above)
-#   "rep(1:4, 12)"     — any R rep() expression; evaluated in baseenv()
-# Returns integer vector (empty on parse failure).
+#   "rep(1:4, 12)"     — rep(SEQ, n), rep(SEQ, times = n), rep(SEQ, each = n),
+#                        SEQ = a:b, c(1, 2, ...) or one integer
+# The rep() form is parsed by a strict grammar and NEVER evaluated: the input is
+# user text from a public form, and eval() would allow arbitrary code execution.
+# Returns integer vector (empty on parse failure or > 10,000 values).
+.REPLICATE_SEQ_MAX <- 10000L
+.parse_int_seq <- function(s) {
+  s <- gsub('\\s+', '', s)
+  if (grepl('^\\d{1,5}:\\d{1,5}$', s)) {
+    ends <- as.integer(strsplit(s, ':')[[1]])
+    if (abs(ends[2] - ends[1]) >= .REPLICATE_SEQ_MAX) return(NULL)
+    return(ends[1]:ends[2])
+  }
+  if (grepl('^c\\(\\d{1,5}(,\\d{1,5})*\\)$', s))
+    return(as.integer(strsplit(gsub('^c\\(|\\)$', '', s), ',')[[1]]))
+  if (grepl('^\\d{1,5}$', s)) return(as.integer(s))
+  NULL
+}
 .parse_replicate_seq <- function(x) {
   if (!nzchar(trimws(x %||% ''))) return(integer(0))
   x <- trimws(x)
 
   if (grepl('rep\\s*\\(', x, perl = TRUE)) {
-    result <- tryCatch(
-      as.integer(eval(parse(text = x), envir = baseenv())),
-      error   = function(e) integer(0),
-      warning = function(w) integer(0)
-    )
-    return(if (length(result) > 0 && length(result) <= 10000L) result else integer(0))
+    m <- regmatches(x, regexec(
+      '^rep\\s*\\(\\s*(.+?)\\s*,\\s*(?:(times|each)\\s*=\\s*)?(\\d{1,5})\\s*\\)$', x, perl = TRUE))[[1]]
+    if (length(m) == 0) return(integer(0))
+    s <- .parse_int_seq(m[2]); n <- as.integer(m[4])
+    if (is.null(s) || n < 1 || length(s) * n > .REPLICATE_SEQ_MAX) return(integer(0))
+    return(if (identical(m[3], 'each')) rep(s, each = n) else rep(s, times = n))
   }
 
   parts <- trimws(strsplit(x, ',')[[1]])
   parts <- parts[nzchar(parts)]
   out <- integer(0)
   for (p in parts) {
-    if (grepl('^\\d+:\\d+$', trimws(p))) {
-      ends <- as.integer(strsplit(trimws(p), ':')[[1]])
-      out <- c(out, ends[1]:ends[2])
+    if (grepl(':', p)) {
+      s <- .parse_int_seq(p)
+      if (!is.null(s)) out <- c(out, s)
     } else {
       v <- suppressWarnings(as.integer(trimws(p)))
       if (!is.na(v)) out <- c(out, v)
     }
+    if (length(out) > .REPLICATE_SEQ_MAX) return(integer(0))
   }
   out
 }

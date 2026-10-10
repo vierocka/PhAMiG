@@ -37,24 +37,38 @@ qres_sync_conditions <- function(con, dataset_ids = NULL) {
       LEFT JOIN raw_measurement_registry rmr ON rmr.dataset_id = p.dataset_id
       LEFT JOIN dose_response_registry   drr ON drr.dataset_id = p.dataset_id")
   }
+  tryCatch(qres_backfill_experiment_type(con), error = function(e) NULL)
   invisible(NULL)
 }
 
 .species_sql_clause <- function(term, col = "coalesce(dc.species,'')") {
   safe   <- qres_sql_safe(tolower(trimws(term)))
-  c1     <- sprintf("lower(%s) LIKE lower('%%%s%%')", col, safe)
+  c1     <- sprintf("lower(%s) LIKE lower('%%%s%%') ESCAPE '\\'", col, safe)
   a_col  <- sprintf(
     "lower(substr(%s,1,1)||'. '||trim(substr(%s,instr(%s,' ')+1)))", col, col, col)
-  c2     <- sprintf("%s LIKE lower('%%%s%%')", a_col, safe)
+  c2     <- sprintf("%s LIKE lower('%%%s%%') ESCAPE '\\'", a_col, safe)
   parts  <- strsplit(trimws(term), "\\s+")[[1]]
   clauses <- c(c1, c2)
   if (length(parts) >= 2 && nchar(parts[1]) > 2 && grepl("^[A-Za-z]", parts[1])) {
     abbrev <- qres_sql_safe(tolower(paste0(substr(parts[1],1,1), '. ',
                                             paste(parts[-1], collapse = ' '))))
-    clauses <- c(clauses, sprintf("lower(%s) LIKE lower('%%%s%%')", col, abbrev))
+    clauses <- c(clauses, sprintf("lower(%s) LIKE lower('%%%s%%') ESCAPE '\\'", col, abbrev))
   }
   paste0('(', paste(clauses, collapse = ' OR '), ')')
 }
+
+# Genus names (lower case) for which the search also matches abbreviated species
+# ("Escherichia" → "E. coli"). Full binomials are matched via search_expr anyway.
+.PHAMIG_GENERA <- c(
+  'escherichia', 'mycobacterium', 'saccharomyces', 'bacillus', 'staphylococcus',
+  'streptococcus', 'pseudomonas', 'salmonella', 'klebsiella', 'vibrio', 'enterococcus',
+  'enterobacter', 'acinetobacter', 'listeria', 'lactobacillus', 'lactiplantibacillus',
+  'clostridium', 'clostridioides', 'campylobacter', 'helicobacter', 'shigella',
+  'yersinia', 'serratia', 'proteus', 'aeromonas', 'brevundimonas', 'caulobacter',
+  'corynebacterium', 'streptomyces', 'bacteroides', 'bifidobacterium', 'myxococcus',
+  'porphyromonas', 'candida', 'schizosaccharomyces', 'trypanosoma', 'neisseria',
+  'haemophilus', 'legionella', 'burkholderia', 'agrobacterium', 'rhizobium',
+  'sphingomonas', 'sphingobacterium', 'erwinia', 'ochrobactrum', 'brucella')
 
 qres_search_datasets <- function(con, search = NULL) {
   requireNamespace('DBI')
@@ -64,7 +78,7 @@ qres_search_datasets <- function(con, search = NULL) {
   base_sql <- "
     SELECT d.dataset_id, dc.species, dc.strain, dc.medium_type,
            dc.perturbation_type, dc.perturbation,
-           p.temperature_c, d.doi, d.year, d.authors, d.raw_file,
+           p.temperature_c, d.doi, d.year, d.authors, d.raw_file, d.experiment_type,
            p.plate_reader,
            CASE WHEN rmr.path IS NOT NULL THEN 1 ELSE 0 END AS has_raw,
            COALESCE(rmr.signal_type,      drr.signal_type)      AS signal_type,
@@ -102,12 +116,14 @@ qres_search_datasets <- function(con, search = NULL) {
         coalesce(rmr.measurement_unit, drr.measurement_unit, '')
       )"
   # For each token, build a LIKE clause on the full concat string.
-  # For tokens that look like a genus name (>4 pure alpha chars), ALSO add
-  # a fallback matching abbreviated species like "M. tuberculosis" when the
-  # user types "Mycobacterium", or "E. coli" when they type "Escherichia".
+  # For tokens that are a genus name, ALSO add a fallback matching abbreviated
+  # species like "M. tuberculosis" when the user types "Mycobacterium", or
+  # "E. coli" when they type "Escherichia". Restricted to known genera: any
+  # 5+ letter word used to qualify, so "evolution" or "erythromycin" matched
+  # every E. coli dataset.
   make_token_clause <- function(tok) {
-    base <- sprintf("%s LIKE '%%%s%%'", search_expr, tok)
-    if (grepl("^[a-z]{5,}$", tok)) {
+    base <- sprintf("%s LIKE '%%%s%%' ESCAPE '\\'", search_expr, tok)
+    if (tok %in% .PHAMIG_GENERA) {
       fl <- substr(tok, 1L, 1L)
       genus_clause <- sprintf("lower(coalesce(dc.species,'')) LIKE '%s.%%'", fl)
       paste0("(", base, " OR ", genus_clause, ")")
@@ -132,7 +148,7 @@ qres_search_by_publication <- function(con, author = NULL, year_min = NULL,
 
   if (!is.null(author) && nzchar(trimws(author %||% ''))) {
     clauses <- c(clauses, sprintf(
-      "lower(coalesce(d.authors,'')) LIKE lower('%%%s%%')",
+      "lower(coalesce(d.authors,'')) LIKE lower('%%%s%%') ESCAPE '\\'",
       qres_sql_safe(trimws(author))))
   }
   if (!is.null(year_min) && is.finite(as.numeric(year_min %||% NA))) {
@@ -143,12 +159,12 @@ qres_search_by_publication <- function(con, author = NULL, year_min = NULL,
   }
   if (!is.null(doi) && nzchar(trimws(doi %||% ''))) {
     clauses <- c(clauses, sprintf(
-      "lower(coalesce(d.doi,'') || ' ' || coalesce(d.source_url,'')) LIKE lower('%%%s%%')",
+      "lower(coalesce(d.doi,'') || ' ' || coalesce(d.source_url,'')) LIKE lower('%%%s%%') ESCAPE '\\'",
       qres_sql_safe(trimws(doi))))
   }
   if (!is.null(device) && nzchar(trimws(device %||% ''))) {
     clauses <- c(clauses, sprintf(
-      "lower(coalesce(p.plate_reader,'') || ' ' || coalesce(p.spectrophotometer,'')) LIKE lower('%%%s%%')",
+      "lower(coalesce(p.plate_reader,'') || ' ' || coalesce(p.spectrophotometer,'')) LIKE lower('%%%s%%') ESCAPE '\\'",
       qres_sql_safe(trimws(device))))
   }
 
@@ -183,7 +199,7 @@ qres_get_datasets_by_ids <- function(con, ids) {
   ph <- paste(rep('?', length(ids)), collapse = ', ')
   DBI::dbGetQuery(con, sprintf("
     SELECT d.dataset_id, dc.species, dc.strain, p.temperature_c,
-           dc.medium_type, dc.perturbation_type, dc.perturbation, d.authors
+           dc.medium_type, dc.perturbation_type, dc.perturbation, d.authors, d.experiment_type
     FROM dataset d
     LEFT JOIN plate p USING(dataset_id)
     LEFT JOIN dataset_conditions dc USING(dataset_id)
@@ -232,7 +248,7 @@ qres_filter_datasets <- function(con, species = NULL, strain = NULL,
   }
   if (!is.null(strain) && nzchar(strain)) {
     clauses <- c(clauses, sprintf(
-      "lower(coalesce(dc.strain,'')) LIKE lower('%%%s%%')", qres_sql_safe(strain)))
+      "lower(coalesce(dc.strain,'')) LIKE lower('%%%s%%') ESCAPE '\\'", qres_sql_safe(strain)))
   }
   if (!is.null(temp_min) && is.finite(as.numeric(temp_min %||% NA_real_))) {
     clauses <- c(clauses, sprintf("p.temperature_c >= %s", as.numeric(temp_min)))
@@ -242,14 +258,14 @@ qres_filter_datasets <- function(con, species = NULL, strain = NULL,
   }
   if (!is.null(medium) && nzchar(medium)) {
     clauses <- c(clauses, sprintf(
-      "lower(coalesce(dc.medium_type,'')) LIKE lower('%%%s%%')", qres_sql_safe(medium)))
+      "lower(coalesce(dc.medium_type,'')) LIKE lower('%%%s%%') ESCAPE '\\'", qres_sql_safe(medium)))
   }
   if (!is.null(perturbation_type) && nzchar(perturbation_type) && perturbation_type != 'all') {
     # perturbation_type is an enum — validate, don't sanitise via string interpolation
-    ptype_safe <- if (perturbation_type %in% c('chemical', 'genetic', 'temperature', 'none'))
+    ptype_safe <- if (perturbation_type %in% c('chemical', 'genetic', 'temperature', 'evolution', 'none'))
       perturbation_type else stop('Invalid perturbation_type: ', perturbation_type)
     clauses <- c(clauses, sprintf(
-      "lower(coalesce(dc.perturbation_type,'')) LIKE lower('%%%s%%')", ptype_safe))
+      "lower(coalesce(dc.perturbation_type,'')) LIKE lower('%%%s%%') ESCAPE '\\'", ptype_safe))
   }
   if (!is.null(perturbation) && nzchar(perturbation)) {
     temp_val <- suppressWarnings(as.numeric(perturbation))
@@ -257,11 +273,11 @@ qres_filter_datasets <- function(con, species = NULL, strain = NULL,
         (is.null(perturbation_type) || perturbation_type %in% c('all', 'temperature'))) {
       # Numeric value: temperature match. temp_val is coerced to number — safe.
       clauses <- c(clauses, sprintf(
-        "(lower(coalesce(dc.perturbation,'')) LIKE lower('%%%s%%') OR ABS(p.temperature_c - %s) <= 0.5)",
+        "(lower(coalesce(dc.perturbation,'')) LIKE lower('%%%s%%') ESCAPE '\\' OR ABS(p.temperature_c - %s) <= 0.5)",
         qres_sql_safe(perturbation), temp_val))
     } else {
       clauses <- c(clauses, sprintf(
-        "lower(coalesce(dc.perturbation,'')) LIKE lower('%%%s%%')", qres_sql_safe(perturbation)))
+        "lower(coalesce(dc.perturbation,'')) LIKE lower('%%%s%%') ESCAPE '\\'", qres_sql_safe(perturbation)))
     }
   }
   if (!is.null(year_min) && is.finite(as.numeric(year_min %||% NA_real_))) {
@@ -272,7 +288,7 @@ qres_filter_datasets <- function(con, species = NULL, strain = NULL,
   }
   if (!is.null(author) && nzchar(author)) {
     clauses <- c(clauses, sprintf(
-      "lower(coalesce(d.authors,'')) LIKE lower('%%%s%%')", qres_sql_safe(author)))
+      "lower(coalesce(d.authors,'')) LIKE lower('%%%s%%') ESCAPE '\\'", qres_sql_safe(author)))
   }
   if (isTRUE(registered_only)) {
     clauses <- c(clauses, "rmr.path IS NOT NULL")
@@ -284,7 +300,7 @@ qres_filter_datasets <- function(con, species = NULL, strain = NULL,
   DBI::dbGetQuery(con, sprintf("
     SELECT d.dataset_id, dc.species, dc.strain, dc.medium_type,
            dc.perturbation_type, dc.perturbation,
-           p.temperature_c, d.doi, d.year, d.authors, rmr.path AS raw_path
+           p.temperature_c, d.doi, d.year, d.authors, d.experiment_type, rmr.path AS raw_path
     FROM dataset d
     LEFT JOIN plate p USING(dataset_id)
     LEFT JOIN dataset_conditions dc USING(dataset_id)
@@ -318,7 +334,7 @@ qres_get_species_with_counts <- function(con, author = NULL) {
          AND w.plate_id IN (
            SELECT p.plate_id FROM plate p
            JOIN dataset d USING(dataset_id)
-           WHERE lower(coalesce(d.authors,'')) LIKE lower('%%%s%%'))
+           WHERE lower(coalesce(d.authors,'')) LIKE lower('%%%s%%') ESCAPE '\\')
        GROUP BY w.species ORDER BY w.species", author_safe)
   } else {
     sql <- "SELECT species,
